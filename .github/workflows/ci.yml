@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+# The libraries are checked out under libs/ (see .github/actions/checkout-libs)
+# at release tags, with their lite data compiled in. The known-output hashes in
+# tests/test_cli.py must be the same on every leg: that is what the libraries'
+# own random engine guarantees.
+env:
+  LIB_FLAGS: -Ilibs/biodata-generator -Ilibs/birth-generator -Ilibs/city-generator -Ilibs/country-generator -Ilibs/entity-generator -Ilibs/interest-generator -Ilibs/name-generator -Ilibs/nickname-generator -Ilibs/occupation-generator -Ilibs/persona-generator -Ilibs/trait-generator -DDASMIG_COUNTRY_EMBED -DDASMIG_CITY_EMBED -DDASMIG_BIRTH_EMBED -DDASMIG_BIODATA_EMBED -DDASMIG_NAME_EMBED -DDASMIG_NICKNAME_EMBED -DDASMIG_INTEREST_EMBED -DDASMIG_OCCUPATION_EMBED -DDASMIG_TRAIT_EMBED
+  MSVC_LIB_FLAGS: /Ilibs\biodata-generator /Ilibs\birth-generator /Ilibs\city-generator /Ilibs\country-generator /Ilibs\entity-generator /Ilibs\interest-generator /Ilibs\name-generator /Ilibs\nickname-generator /Ilibs\occupation-generator /Ilibs\persona-generator /Ilibs\trait-generator /DDASMIG_COUNTRY_EMBED /DDASMIG_CITY_EMBED /DDASMIG_BIRTH_EMBED /DDASMIG_BIODATA_EMBED /DDASMIG_NAME_EMBED /DDASMIG_NICKNAME_EMBED /DDASMIG_INTEREST_EMBED /DDASMIG_OCCUPATION_EMBED /DDASMIG_TRAIT_EMBED
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86-64
+            os: ubuntu-24.04
+            asset: dasmig-gen-linux-x86_64
+            install: sudo apt-get update && sudo apt-get install -y g++-14
+            cxx: g++-14
+            flags: -std=gnu++23 -O2 -DNDEBUG -static-libstdc++ -static-libgcc
+          - name: Linux ARM64
+            os: ubuntu-24.04-arm
+            asset: dasmig-gen-linux-arm64
+            install: sudo apt-get update && sudo apt-get install -y g++-14
+            cxx: g++-14
+            flags: -std=gnu++23 -O2 -DNDEBUG -static-libstdc++ -static-libgcc
+          - name: macOS ARM64
+            os: macos-15
+            asset: dasmig-gen-macos-arm64
+            install: ''
+            cxx: clang++
+            flags: -std=c++23 -O2 -DNDEBUG
+          - name: Windows x86-64
+            os: windows-2022
+            asset: dasmig-gen-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/checkout-libs
+
+      - name: Install compiler
+        if: matrix.install != ''
+        run: ${{ matrix.install }}
+
+      - name: Build
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p build
+          ${{ matrix.cxx }} ${{ matrix.flags }} -Wall -Wextra -Wpedantic $LIB_FLAGS \
+            -o build/dasmig-gen src/main.cpp
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: Build (MSVC)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          mkdir build
+          cl /nologo /std:c++latest /EHsc /O2 /MT /W4 /permissive- /utf-8 /I. %MSVC_LIB_FLAGS% /Fobuild\ /Fe:build\dasmig-gen.exe src\main.cpp || exit /b 1
+
+      - name: Test
+        shell: bash
+        run: |
+          bin=build/dasmig-gen${{ runner.os == 'Windows' && '.exe' || '' }}
+          python3 tests/test_cli.py "$bin" || python tests/test_cli.py "$bin"
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: build/dasmig-gen${{ runner.os == 'Windows' && '.exe' || '' }}
+
+  # A tag publishes the four binaries as release assets.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir release
+          for dir in artifacts/*; do
+            name=$(basename "$dir")
+            file=$(ls "$dir")
+            cp "$dir/$file" "release/$name"
+            chmod +x "release/$name"
+          done
+          (cd release && sha256sum * > SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --generate-notes

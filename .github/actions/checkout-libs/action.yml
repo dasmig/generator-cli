@@ -1,0 +1,29 @@
+name: Check out the composed libraries
+description: >
+  Checks out the libraries dasmig-gen is built from, at the release tags it was tested with, under libs/. Move the tags here, in one place, when adopting a newer release; the known-output tests change with them.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/biodata-generator, ref: v3.1.0, path: libs/biodata-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/birth-generator, ref: v3.1.0, path: libs/birth-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/city-generator, ref: v4.1.0, path: libs/city-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/country-generator, ref: v3.1.0, path: libs/country-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/entity-generator, ref: v4.1.0, path: libs/entity-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/interest-generator, ref: v2.1.0, path: libs/interest-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/name-generator, ref: v4.2.0, path: libs/name-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/nickname-generator, ref: v3.1.0, path: libs/nickname-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/occupation-generator, ref: v2.2.0, path: libs/occupation-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/persona-generator, ref: v1.2.0, path: libs/persona-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/trait-generator, ref: v2.1.0, path: libs/trait-generator}
