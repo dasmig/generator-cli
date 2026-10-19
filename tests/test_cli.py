@@ -17,13 +17,14 @@ from pathlib import Path
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else "build/dasmig-gen"
 KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "biodata", "trait", "interest",
-         "occupation"]
+         "occupation", "user"]
 
 KNOWN = {
-    ("persona", "1f"): "6676bf6dc615852f93a92cf9d7c57f4a2ac8a77e7476481c2921b2671399c67c",
+    ("persona", "1f"): "0ce617c55264239d0ee6f77c8793eb7c536bf594949275dc8dadd569e3058eac",
     ("name", "2a"): "92523b6a46b7abfb0df42cedcac244cfccb4c5e358e8cd9dd4fb35e28f2987c9",
     ("city", "3"): "18363ff56b0229a14f7544258d3fc26e17c95d398a18683e605da11340f86aef",
-    ("occupation", "4"): "76841d8d85e0db048575d1982cfa37a9a82fbeaa2efb792d3f70bbd9e580c212",
+    ("occupation", "4"): "a3a8e38268b29c82c38bda278d69ac1930ecabc236f5dbd61ddd0fb0f2c1a605",
+    ("user", "5"): "5a721cba489e16ac45dd237ecce547b461d2e35f350dada8bec376c0b3b3e3f0",
 }
 
 failures = []
@@ -55,10 +56,12 @@ for args in [[], ["nosuchkind"], ["persona", "--bogus"], ["persona", "--seed", "
              ["persona", "--format", "xml"], ["persona", "--tier", "medium"], ["city", "--sex", "male"],
              ["name", "--age", "30"], ["persona", "--age", "40-20"], ["persona", "--age", "121"],
              ["persona", "--reference-date", "2023-02-30"], ["persona", "--sex", "other"],
-             ["biodata", "--age", "20-30"], ["persona", "persona"]]:
+             ["biodata", "--age", "20-30"], ["persona", "persona"],
+             ["user", "--unique", "city"], ["city", "--unique", "email"], ["persona", "--safe"]]:
     result = run(*args, expect=2)
     check(b"dasmig-gen:" in result.stderr, f"usage error message for {args}")
 run("persona", "--country", "XX", "--count", "1", "--seed", "1", expect=1)
+run("user", "--age", "5-10", "--count", "1", "--seed", "1", expect=1)
 check(run("persona", "--tier", "full", "--data-dir", tempfile.gettempdir(), "--count", "1", "--seed", "1",
           expect=1).returncode == 1, "a missing full tier is an error")
 
@@ -131,6 +134,19 @@ check(len(lines(nick)) == 1, "nickname from a name")
 check(len(json.loads(lines(run("trait", "--count", "1", "--seed", "1", "--traits", "6").stdout)[0])["traits"]) <= 6,
       "trait count")
 
+# --- user: the request, safe contacts and unique keys ---
+for row in lines(run("user", "--count", "20", "--seed", "2", "--country", "br", "--sex", "female",
+                     "--age", "25-35").stdout):
+    u = json.loads(row)
+    check(u["country"]["code"] == "BR" and u["sex"] == "female" and 25 <= u["age"] <= 35
+          and u["address"]["country_code"] == "BR" and u["phone"]["country_code"] == "BR", "user request fields")
+safe = [json.loads(r) for r in lines(run("user", "--count", "30", "--seed", "4", "--safe").stdout)]
+check(len(safe) == 30 and all(u["email"]["reserved"] for u in safe), "user --safe")
+for key, field in (("email", lambda u: u["email"]["address"]), ("username", lambda u: u["account"]["username"])):
+    batch = [json.loads(r) for r in lines(run("user", "--count", "2000", "--seed", "7", "--country", "IS",
+                                              "--unique", key, "--threads", "3").stdout)]
+    check(len(batch) == 2000 and len({field(u) for u in batch}) == 2000, f"user unique {key}")
+
 # --- known outputs, the same on every platform ---
 for (kind, seed), digest in KNOWN.items():
     data = run(kind, "--count", "1000", "--seed", seed, "--threads", "4").stdout
@@ -142,4 +158,4 @@ if failures:
     for failure in failures:
         print(" -", failure)
     sys.exit(1)
-print("PASS: dasmig-gen usage errors, 11 kinds, thread invariance, ranges, formats, requests and known outputs.")
+print("PASS: dasmig-gen usage errors, 12 kinds, thread invariance, ranges, formats, requests and known outputs.")

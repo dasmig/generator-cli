@@ -16,6 +16,7 @@
 #include <dasmig/occupationgen.hpp>
 #include <dasmig/personagen.hpp>
 #include <dasmig/traitgen.hpp>
+#include <dasmig/usergen.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -40,7 +41,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "1.0.0"
+#define DASMIG_GEN_VERSION "2.0.0"
 #endif
 
 namespace
@@ -65,6 +66,7 @@ Kinds:
   birth       a birth date and age             biodata     height, weight, eyes, hair, skin, blood type
   trait       a personality                    interest    religion, hobbies and media
   occupation  employment, education and job
+  user        a user record (name, birth, address, phone, email, account)
 
 Batch options (all kinds):
   --count N          number of items (default 1)
@@ -81,16 +83,18 @@ Batch options (all kinds):
 
 Request options (the ones a kind understands; the rest is drawn):
   --country CC       ISO 3166-1 alpha-2 code        (persona, name, surname, city, birth,
-                                                     biodata, interest, occupation)
-  --sex male|female                                 (persona, birth, biodata, interest, occupation)
-  --age N or MIN-MAX                                (persona, birth, biodata, interest, occupation;
+                                                     biodata, interest, occupation, user)
+  --sex male|female                                 (persona, birth, biodata, interest, occupation, user)
+  --age N or MIN-MAX                                (persona, birth, biodata, interest, occupation, user;
                                                      biodata, interest and occupation take one age)
-  --reference-date YYYY-MM-DD   the date ages are computed at (persona, birth)
+  --reference-date YYYY-MM-DD   the date ages are computed at (persona, birth, user)
   --traits N         number of personality traits   (persona, trait)
   --gender m|f|any   (name, surname)
   --name TEXT        full name to derive from       (nickname)
   --region NAME      UN geoscheme region            (country)
   --uniform          uniform instead of population-weighted choice (city, country, birth)
+  --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user)
+  --unique KEY       no two items share the key: email or username (user)
 
 Other:
   --help, --version
@@ -182,9 +186,9 @@ struct arguments
 };
 
 const std::set<std::string> value_options{"country", "sex", "age", "reference-date", "traits", "gender",
-                                          "name",    "region"};
+                                          "name",    "region", "unique"};
 const std::set<std::string> kinds{"persona", "name",      "surname", "nickname", "city",     "country",
-                                  "birth",   "biodata",   "trait",   "interest", "occupation"};
+                                  "birth",   "biodata",   "trait",   "interest", "occupation", "user"};
 
 arguments parse_arguments(int argc, char** argv)
 {
@@ -205,7 +209,7 @@ arguments parse_arguments(int argc, char** argv)
             inline_value = name.substr(eq + 1);
             name.resize(eq);
         }
-        if (name == "uniform")
+        if (name == "uniform" || name == "safe")
         {
             args.flags.insert(name);
             continue;
@@ -247,13 +251,17 @@ const std::map<std::string, std::set<std::string>> accepted{
     {"biodata", {"country", "sex", "age"}},
     {"trait", {"traits"}},
     {"interest", {"country", "sex", "age"}},
-    {"occupation", {"country", "sex", "age"}}};
+    {"occupation", {"country", "sex", "age"}},
+    {"user", {"country", "sex", "age", "reference-date", "safe", "unique"}}};
 
 void check_request_options(const arguments& args)
 {
     const auto& ok = accepted.at(args.kind);
     for (const auto& [name, _] : args.request)
         if (!ok.contains(name)) throw usage_error("--" + name + " does not apply to " + args.kind);
+    if (const auto unique = args.request.find("unique");
+        unique != args.request.end() && unique->second != "email" && unique->second != "username")
+        throw usage_error("--unique must be email or username");
     for (const auto& name : args.flags)
         if (!ok.contains(name)) throw usage_error("--" + name + " does not apply to " + args.kind);
 }
@@ -290,6 +298,13 @@ class json_array_writer
     bool _empty{true};
 };
 
+// An item's JSON with the key a unique batch compares.
+struct keyed_json
+{
+    std::string json;
+    std::string key;
+};
+
 // Generates the batch with `make(item_seed)`, which returns the item as JSON
 // text, so serializing runs on the worker threads and the calling thread only
 // writes. Items stream to the writer for the format in index order.
@@ -318,6 +333,32 @@ void emit(const std::string& format, std::ostream& out, const core::batch_option
     }
 }
 
+// The same as emit(), for items that are unique by a key (core::unique_rule).
+template <typename Make>
+void emit_keyed(const std::string& format, std::ostream& out, const core::batch_options& options,
+                std::uint64_t seed, const Make& make)
+{
+    if (format == "jsonl")
+    {
+        core::jsonl_writer writer{out};
+        core::for_each_batch(options, seed, make,
+                             [&writer](std::uint64_t, const keyed_json& item) { writer.write_line(item.json); });
+    }
+    else if (format == "csv")
+    {
+        core::csv_writer writer{out};
+        core::for_each_batch(options, seed, make,
+                             [&writer](std::uint64_t, const keyed_json& item) { writer.write_json(item.json); });
+    }
+    else
+    {
+        json_array_writer writer{out};
+        core::for_each_batch(options, seed, make,
+                             [&writer](std::uint64_t, const keyed_json& item) { writer.add(item.json); });
+        writer.finish();
+    }
+}
+
 void load_full_tier(const arguments& args)
 {
     if (args.tier != "full") return;
@@ -329,7 +370,8 @@ void load_full_tier(const arguments& args)
                                               "libraries' checkouts, e.g. <DIR>/" + library + "/resources");
     };
     const bool all = args.kind == "persona";
-    const auto wants = [&](const char* kind) { return all || args.kind == kind; };
+    const bool is_user = args.kind == "user";
+    const auto wants = [&](const char* kind) { return all || is_user || args.kind == kind; };
     if (wants("name") || wants("surname") || all) check(dasmig::ng::instance().load(dasmig::dataset::full), "name-generator");
     if (wants("city") || all) check(dasmig::cg::instance().load(dasmig::dataset::full), "city-generator");
     if (wants("country") || all) check(dasmig::cntg::instance().load(dasmig::dataset::full), "country-generator");
@@ -337,6 +379,13 @@ void load_full_tier(const arguments& args)
     if (wants("biodata") || all) check(dasmig::bdg::instance().load(dasmig::dataset::full), "biodata-generator");
     if (wants("interest") || all) check(dasmig::intg::instance().load(dasmig::dataset::full), "interest-generator");
     if (wants("occupation") || all) check(dasmig::ocg::instance().load(dasmig::dataset::full), "occupation-generator");
+    if (is_user)
+    {
+        check(dasmig::adg::instance().load(dasmig::dataset::full), "address-generator");
+        check(dasmig::phg::instance().load(dasmig::dataset::full), "phone-generator");
+        check(dasmig::emg::instance().load(dasmig::dataset::full), "email-generator");
+        check(dasmig::usg::instance().load(dasmig::dataset::full), "user-generator");
+    }
     if (wants("nickname")) check(dasmig::nng::instance().load(dasmig::dataset::full), "nickname-generator");
     if (all || wants("city"))
     {
@@ -353,7 +402,11 @@ int run(const arguments& args)
 
     const std::uint64_t seed = args.seed ? *args.seed : core::rng::entropy_seed();
     if (!args.seed) std::fprintf(stderr, "seed: %s\n", hex16(seed).c_str());
-    const core::batch_options options{.count = args.count, .first = args.first, .threads = args.threads};
+    core::batch_options options{.count = args.count, .first = args.first, .threads = args.threads};
+    if (get(args, "unique"))
+    {
+        options.unique = core::unique_rule::by<keyed_json>([](const keyed_json& item) { return item.key; });
+    }
 
     std::ofstream file;
     if (!args.out.empty())
@@ -462,6 +515,23 @@ int run(const arguments& args)
         const auto& gen = dasmig::intg::instance();
         emit(args.format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_interest(request, s).to_json(); });
+    }
+    else if (args.kind == "user")
+    {
+        dasmig::user_request request;
+        if (country) request.country = upper(*country);
+        if (sex_text) request.person_sex = parse_sex(*sex_text);
+        if (age_text) request.ages = parse_ages(*age_text);
+        if (date_text) request.reference_date = parse_date(*date_text);
+        request.safe = args.flags.contains("safe");
+        const bool by_username = get(args, "unique") == std::optional<std::string>{"username"};
+        const auto& gen = dasmig::usg::instance();
+        emit_keyed(args.format, out, options, seed,
+                   [&](std::uint64_t s)
+                   {
+                       const auto user = gen.get_user(request, s);
+                       return keyed_json{user.to_json(), by_username ? user.account.username : user.mail.address()};
+                   });
     }
     else // occupation
     {
