@@ -27,8 +27,11 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 | `trait` | A personality | `--traits` |
 | `interest` | Religion, hobbies and media | `--country --sex --age` |
 | `occupation` | Employment, education and job | `--country --sex --age` |
+| `user` | A user record: name, birth, address, phone, email and an account (username, password, dates, device, locale) | `--country --sex --age --reference-date --safe --unique` |
 
-What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years, 0-120; `biodata`, `interest` and `occupation` take one age). Countries are ISO 3166-1 alpha-2 codes. The generator never reads the clock: pass `--reference-date YYYY-MM-DD` for ages as of a date.
+What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years, 0-120; `biodata`, `interest` and `occupation` take one age; `user` ages start at 13). Countries are ISO 3166-1 alpha-2 codes. The generator never reads the clock: pass `--reference-date YYYY-MM-DD` for ages as of a date.
+
+`user --safe` makes contacts that reach no one (reserved email domains and, where a country has one, fictional phone numbers). `user --unique email` (or `username`) makes no two users share the key; the batch is still the same for any `--threads`.
 
 ## Batches
 
@@ -67,8 +70,8 @@ The libraries are header-only siblings, so a build needs them next to this repos
 
 ```
 git clone https://github.com/dasmig/generator-cli
-# clone the eleven repositories it uses beside it (biodata, birth, city, country, entity,
-# interest, name, nickname, occupation, persona, trait: dasmig/<name>-generator)
+# clone the fifteen repositories it uses beside it (address, biodata, birth, city, country, email,
+# entity, interest, name, nickname, occupation, persona, phone, trait, user: dasmig/<name>-generator)
 cd generator-cli
 make            # build/dasmig-gen (clang++; CXX=g++-14 for GCC)
 make test       # python3 tests/test_cli.py
