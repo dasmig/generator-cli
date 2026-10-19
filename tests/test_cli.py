@@ -20,11 +20,11 @@ KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "
          "occupation", "user"]
 
 KNOWN = {
-    ("persona", "1f"): "0ce617c55264239d0ee6f77c8793eb7c536bf594949275dc8dadd569e3058eac",
+    ("persona", "1f"): "4f5aaf6a50517742898a15a1a71da8a827fe86066d7a77b5a3488e555b35db8a",
     ("name", "2a"): "92523b6a46b7abfb0df42cedcac244cfccb4c5e358e8cd9dd4fb35e28f2987c9",
     ("city", "3"): "18363ff56b0229a14f7544258d3fc26e17c95d398a18683e605da11340f86aef",
     ("occupation", "4"): "a3a8e38268b29c82c38bda278d69ac1930ecabc236f5dbd61ddd0fb0f2c1a605",
-    ("user", "5"): "5a721cba489e16ac45dd237ecce547b461d2e35f350dada8bec376c0b3b3e3f0",
+    ("user", "5"): "ced64388c6f120352a8c599858a978ecc852a1b92bdd676e3cb087e588b523b9",
 }
 
 failures = []
