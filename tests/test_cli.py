@@ -17,13 +17,14 @@ from pathlib import Path
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else "build/dasmig-gen"
 KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "biodata", "trait", "interest",
-         "occupation", "user"]
+         "occupation", "user", "family"]
 
 KNOWN = {
     ("persona", "1f"): "4f5aaf6a50517742898a15a1a71da8a827fe86066d7a77b5a3488e555b35db8a",
     ("name", "2a"): "92523b6a46b7abfb0df42cedcac244cfccb4c5e358e8cd9dd4fb35e28f2987c9",
     ("city", "3"): "18363ff56b0229a14f7544258d3fc26e17c95d398a18683e605da11340f86aef",
     ("occupation", "4"): "a3a8e38268b29c82c38bda278d69ac1930ecabc236f5dbd61ddd0fb0f2c1a605",
+    ("family", "6"): "964afc0f49de81145b3682cde557963ceff9dd66a1de61fa64fb939b52111fee",
     ("user", "5"): "ced64388c6f120352a8c599858a978ecc852a1b92bdd676e3cb087e588b523b9",
 }
 
@@ -57,7 +58,9 @@ for args in [[], ["nosuchkind"], ["persona", "--bogus"], ["persona", "--seed", "
              ["name", "--age", "30"], ["persona", "--age", "40-20"], ["persona", "--age", "121"],
              ["persona", "--reference-date", "2023-02-30"], ["persona", "--sex", "other"],
              ["biodata", "--age", "20-30"], ["persona", "persona"],
-             ["user", "--unique", "city"], ["city", "--unique", "email"], ["persona", "--safe"]]:
+             ["user", "--unique", "city"], ["city", "--unique", "email"], ["persona", "--safe"],
+             ["family", "--traits", "3"], ["family", "--up", "x"], ["family", "--age", "20-30"],
+             ["persona", "--up", "1"]]:
     result = run(*args, expect=2)
     check(b"dasmig-gen:" in result.stderr, f"usage error message for {args}")
 run("persona", "--country", "XX", "--count", "1", "--seed", "1", expect=1)
@@ -83,7 +86,7 @@ for kind in KINDS:
     check(run(kind, "--count", "2", "--seed", seed).stdout == unseeded.stdout, f"{kind}: replay from the printed seed")
 
 # --- the output does not depend on threads; ranges and splits agree ---
-for kind in ("persona", "name", "city"):
+for kind in ("persona", "name", "city", "family"):
     base = run(kind, "--count", "300", "--seed", "1f", "--threads", "1").stdout
     for threads in ("2", "7", "0"):
         check(run(kind, "--count", "300", "--seed", "1f", "--threads", threads).stdout == base,
@@ -147,6 +150,19 @@ for key, field in (("email", lambda u: u["email"]["address"]), ("username", lamb
                                               "--unique", key, "--threads", "3").stdout)]
     check(len(batch) == 2000 and len({field(u) for u in batch}) == 2000, f"user unique {key}")
 
+# --- family: the request and the generations ---
+for row in lines(run("family", "--count", "10", "--seed", "3", "--country", "br", "--sex", "female", "--age", "30",
+                     "--up", "0", "--down", "0").stdout):
+    f = json.loads(row)
+    anchor = f["members"][0]
+    check(f["country"] == "BR" and anchor["role"] == "anchor" and anchor["sex"] == "female" and anchor["age"] == 30
+          and not any(m["role"] in ("father", "mother", "sibling", "child") for m in f["members"]),
+          "family request fields and generations")
+for row in lines(run("family", "--count", "5", "--seed", "3", "--country", "JP", "--reference-date", "2030-03-09").stdout):
+    check(json.loads(row)["reference_date"] == "2030-03-09", "family reference date")
+check(any(m["role"] == "child" for row in lines(run("family", "--count", "50", "--seed", "3", "--down", "1").stdout)
+          for m in json.loads(row)["members"]), "family children")
+
 # --- known outputs, the same on every platform ---
 for (kind, seed), digest in KNOWN.items():
     data = run(kind, "--count", "1000", "--seed", seed, "--threads", "4").stdout
@@ -158,4 +174,4 @@ if failures:
     for failure in failures:
         print(" -", failure)
     sys.exit(1)
-print("PASS: dasmig-gen usage errors, 12 kinds, thread invariance, ranges, formats, requests and known outputs.")
+print("PASS: dasmig-gen usage errors, 13 kinds, thread invariance, ranges, formats, requests and known outputs.")

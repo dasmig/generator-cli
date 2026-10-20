@@ -15,6 +15,7 @@
 #include <dasmig/nicknamegen.hpp>
 #include <dasmig/occupationgen.hpp>
 #include <dasmig/personagen.hpp>
+#include <dasmig/relgen.hpp>
 #include <dasmig/traitgen.hpp>
 #include <dasmig/usergen.hpp>
 
@@ -41,7 +42,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.0.0"
+#define DASMIG_GEN_VERSION "3.1.0"
 #endif
 
 namespace
@@ -67,6 +68,7 @@ Kinds:
   trait       a personality                    interest    religion, hobbies and media
   occupation  employment, education and job
   user        a user record (name, birth, address, phone, email, account)
+  family      the people around a person (parents, siblings, partners, children)
 
 Batch options (all kinds):
   --count N          number of items (default 1)
@@ -83,16 +85,17 @@ Batch options (all kinds):
 
 Request options (the ones a kind understands; the rest is drawn):
   --country CC       ISO 3166-1 alpha-2 code        (persona, name, surname, city, birth,
-                                                     biodata, interest, occupation, user)
-  --sex male|female                                 (persona, birth, biodata, interest, occupation, user)
+                                                     biodata, interest, occupation, user, family)
+  --sex male|female                                 (persona, birth, biodata, interest, occupation, user, family)
   --age N or MIN-MAX                                (persona, birth, biodata, interest, occupation, user;
-                                                     biodata, interest and occupation take one age)
-  --reference-date YYYY-MM-DD   the date ages are computed at (persona, birth, user)
+                                                     biodata, interest, occupation and family take one age)
+  --reference-date YYYY-MM-DD   the date ages are computed at (persona, birth, user, family)
   --traits N         number of personality traits   (persona, trait)
   --gender m|f|any   (name, surname)
   --name TEXT        full name to derive from       (nickname)
   --region NAME      UN geoscheme region            (country)
-  --uniform          uniform instead of population-weighted choice (city, country, birth)
+  --up N, --down N   generations above and below the person (default 1 each) (family)
+  --uniform          uniform instead of population-weighted choice (city, country, birth, family)
   --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user)
   --unique KEY       no two items share the key: email or username (user)
 
@@ -186,9 +189,9 @@ struct arguments
 };
 
 const std::set<std::string> value_options{"country", "sex", "age", "reference-date", "traits", "gender",
-                                          "name",    "region", "unique"};
+                                          "name",    "region", "unique", "up",     "down"};
 const std::set<std::string> kinds{"persona", "name",      "surname", "nickname", "city",     "country",
-                                  "birth",   "biodata",   "trait",   "interest", "occupation", "user"};
+                                  "birth",   "biodata",   "trait",   "interest", "occupation", "user",   "family"};
 
 arguments parse_arguments(int argc, char** argv)
 {
@@ -252,7 +255,8 @@ const std::map<std::string, std::set<std::string>> accepted{
     {"trait", {"traits"}},
     {"interest", {"country", "sex", "age"}},
     {"occupation", {"country", "sex", "age"}},
-    {"user", {"country", "sex", "age", "reference-date", "safe", "unique"}}};
+    {"user", {"country", "sex", "age", "reference-date", "safe", "unique"}},
+    {"family", {"country", "sex", "age", "reference-date", "uniform", "up", "down"}}};
 
 void check_request_options(const arguments& args)
 {
@@ -371,11 +375,14 @@ void load_full_tier(const arguments& args)
     };
     const bool all = args.kind == "persona";
     const bool is_user = args.kind == "user";
+    const bool is_family = args.kind == "family";
     const auto wants = [&](const char* kind) { return all || is_user || args.kind == kind; };
-    if (wants("name") || wants("surname") || all) check(dasmig::ng::instance().load(dasmig::dataset::full), "name-generator");
+    if (wants("name") || wants("surname") || is_family || all)
+        check(dasmig::ng::instance().load(dasmig::dataset::full), "name-generator");
     if (wants("city") || all) check(dasmig::cg::instance().load(dasmig::dataset::full), "city-generator");
     if (wants("country") || all) check(dasmig::cntg::instance().load(dasmig::dataset::full), "country-generator");
-    if (wants("birth") || all) check(dasmig::bthg::instance().load(dasmig::dataset::full), "birth-generator");
+    if (wants("birth") || is_family || all) check(dasmig::bthg::instance().load(dasmig::dataset::full), "birth-generator");
+    if (is_family) check(dasmig::relg::instance().load(dasmig::dataset::full), "relationship-generator");
     if (wants("biodata") || all) check(dasmig::bdg::instance().load(dasmig::dataset::full), "biodata-generator");
     if (wants("interest") || all) check(dasmig::intg::instance().load(dasmig::dataset::full), "interest-generator");
     if (wants("occupation") || all) check(dasmig::ocg::instance().load(dasmig::dataset::full), "occupation-generator");
@@ -532,6 +539,20 @@ int run(const arguments& args)
                        const auto user = gen.get_user(request, s);
                        return keyed_json{user.to_json(), by_username ? user.account.username : user.mail.address()};
                    });
+    }
+    else if (args.kind == "family")
+    {
+        dasmig::family_request request;
+        if (country) request.anchor.country_code = upper(*country);
+        if (sex_text) request.anchor.bio_sex = parse_sex(*sex_text);
+        if (age_text) request.anchor.age = static_cast<int>(parse_single_age(*age_text));
+        if (date_text) request.reference_date = parse_date(*date_text);
+        if (const auto up = get(args, "up")) request.up = static_cast<int>(parse_count(*up, "--up"));
+        if (const auto down = get(args, "down")) request.down = static_cast<int>(parse_count(*down, "--down"));
+        request.weighted = !uniform;
+        const auto& gen = dasmig::relg::instance();
+        emit(args.format, out, options, seed,
+             [&](std::uint64_t s) { return gen.get_family(request, s).to_json(); });
     }
     else // occupation
     {
