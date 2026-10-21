@@ -60,7 +60,7 @@ for args in [[], ["nosuchkind"], ["persona", "--bogus"], ["persona", "--seed", "
              ["biodata", "--age", "20-30"], ["persona", "persona"],
              ["user", "--unique", "city"], ["city", "--unique", "email"], ["persona", "--safe"],
              ["family", "--traits", "3"], ["family", "--up", "x"], ["family", "--age", "20-30"],
-             ["persona", "--up", "1"]]:
+             ["persona", "--up", "1"], ["persona", "--down", "1"], ["name", "--relations"], ["family", "--relations"]]:
     result = run(*args, expect=2)
     check(b"dasmig-gen:" in result.stderr, f"usage error message for {args}")
 run("persona", "--country", "XX", "--count", "1", "--seed", "1", expect=1)
@@ -125,6 +125,22 @@ for row in lines(run("persona", "--count", "20", "--seed", "2", "--country", "br
 for row in lines(run("persona", "--count", "3", "--seed", "2", "--country", "JP",
                      "--reference-date", "2030-03-09").stdout):
     check(json.loads(row)["birth"]["date"] <= "2030-03-09", "persona reference date")
+# --relations adds the family as "relatives" and changes nothing else; --up and --down shape it
+plain = [json.loads(r) for r in lines(run("persona", "--count", "30", "--seed", "1f").stdout)]
+with_family = [json.loads(r) for r in lines(run("persona", "--count", "30", "--seed", "1f", "--relations").stdout)]
+check(all("relatives" not in p for p in plain), "persona has no relatives by default")
+check(all("relatives" in p for p in with_family), "persona --relations has relatives")
+check([{k: v for k, v in p.items() if k != "relatives"} for p in with_family] == plain,
+      "--relations changes nothing but relatives")
+check(run("persona", "--count", "30", "--seed", "1f", "--relations", "--threads", "0").stdout
+      == run("persona", "--count", "30", "--seed", "1f", "--relations").stdout, "relations: threads")
+shallow = [json.loads(r) for r in lines(run("persona", "--count", "30", "--seed", "1f", "--relations",
+                                            "--up", "0", "--down", "0").stdout)]
+check(all({m["role"] for m in p["relatives"]["members"]} <= {"anchor", "partner"} for p in shallow),
+      "relations --up 0 --down 0 leaves no parents, siblings or children")
+check(all(any(m["role"] == "anchor" and m["name"]["full"] == p["name"] and m["age"] == p["age"]
+              for m in p["relatives"]["members"]) for p in with_family),
+      "the anchor of the relatives is the persona")
 for row in lines(run("city", "--count", "20", "--seed", "2", "--country", "jp", "--uniform").stdout):
     check(json.loads(row)["country_code"] == "JP", "city country")
 for row in lines(run("country", "--count", "20", "--seed", "2", "--region", "Europe").stdout):
