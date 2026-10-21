@@ -6,7 +6,7 @@ LIB_DIRS := address biodata birth city country email entity interest name nickna
 EMBED    := $(addprefix -DDASMIG_,ADDRESS_EMBED BIODATA_EMBED BIRTH_EMBED CITY_EMBED COUNTRY_EMBED EMAIL_EMBED INTEREST_EMBED NAME_EMBED NICKNAME_EMBED OCCUPATION_EMBED PHONE_EMBED RELATIONSHIP_EMBED TRAIT_EMBED USER_EMBED)
 CXXFLAGS ?= -O2 -DNDEBUG
 CXXFLAGS += -std=c++23 -Wall -Wextra -Wpedantic -Wno-c2y-extensions $(foreach d,$(LIB_DIRS),-I$(LIBS)/$(d)-generator) $(EMBED)
-VERSION  ?= 3.1.0
+VERSION  ?= 3.2.0
 BUILD    := build
 PYTHON   ?= python3
 
