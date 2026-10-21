@@ -94,7 +94,8 @@ Request options (the ones a kind understands; the rest is drawn):
   --gender m|f|any   (name, surname)
   --name TEXT        full name to derive from       (nickname)
   --region NAME      UN geoscheme region            (country)
-  --up N, --down N   generations above and below the person (default 1 each) (family)
+  --up N, --down N   generations above and below the person (default 1 each) (family; persona with --relations)
+  --relations        also draw the persona's family (parents, siblings, partners, children) as "relatives" (persona)
   --uniform          uniform instead of population-weighted choice (city, country, birth, family)
   --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user)
   --unique KEY       no two items share the key: email or username (user)
@@ -212,7 +213,7 @@ arguments parse_arguments(int argc, char** argv)
             inline_value = name.substr(eq + 1);
             name.resize(eq);
         }
-        if (name == "uniform" || name == "safe")
+        if (name == "uniform" || name == "safe" || name == "relations")
         {
             args.flags.insert(name);
             continue;
@@ -244,7 +245,7 @@ arguments parse_arguments(int argc, char** argv)
 
 // The options a kind understands; any other request option is an error.
 const std::map<std::string, std::set<std::string>> accepted{
-    {"persona", {"country", "sex", "age", "reference-date", "traits", "uniform"}},
+    {"persona", {"country", "sex", "age", "reference-date", "traits", "uniform", "relations", "up", "down"}},
     {"name", {"country", "gender"}},
     {"surname", {"country", "gender"}},
     {"nickname", {"name"}},
@@ -268,6 +269,9 @@ void check_request_options(const arguments& args)
         throw usage_error("--unique must be email or username");
     for (const auto& name : args.flags)
         if (!ok.contains(name)) throw usage_error("--" + name + " does not apply to " + args.kind);
+    if (args.kind == "persona" && !args.flags.contains("relations"))
+        for (const char* name : {"up", "down"})
+            if (args.request.contains(name)) throw usage_error(std::string{"--"} + name + " needs --relations for persona");
 }
 
 std::optional<std::string> get(const arguments& args, const std::string& key)
@@ -382,7 +386,7 @@ void load_full_tier(const arguments& args)
     if (wants("city") || all) check(dasmig::cg::instance().load(dasmig::dataset::full), "city-generator");
     if (wants("country") || all) check(dasmig::cntg::instance().load(dasmig::dataset::full), "country-generator");
     if (wants("birth") || is_family || all) check(dasmig::bthg::instance().load(dasmig::dataset::full), "birth-generator");
-    if (is_family) check(dasmig::relg::instance().load(dasmig::dataset::full), "relationship-generator");
+    if (is_family || (all && args.flags.contains("relations"))) check(dasmig::relg::instance().load(dasmig::dataset::full), "relationship-generator");
     if (wants("biodata") || all) check(dasmig::bdg::instance().load(dasmig::dataset::full), "biodata-generator");
     if (wants("interest") || all) check(dasmig::intg::instance().load(dasmig::dataset::full), "interest-generator");
     if (wants("occupation") || all) check(dasmig::ocg::instance().load(dasmig::dataset::full), "occupation-generator");
@@ -437,6 +441,13 @@ int run(const arguments& args)
         if (age_text) request.ages = parse_ages(*age_text);
         if (date_text) request.reference_date = parse_date(*date_text);
         if (traits_text) request.traits = static_cast<std::size_t>(parse_count(*traits_text, "--traits"));
+        if (args.flags.contains("relations"))
+        {
+            dasmig::family_request family;
+            if (const auto up = get(args, "up")) family.up = static_cast<int>(parse_count(*up, "--up"));
+            if (const auto down = get(args, "down")) family.down = static_cast<int>(parse_count(*down, "--down"));
+            request.relations = family;
+        }
         const auto& gen = dasmig::psg::instance();
         emit(args.format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_persona(request, s).to_json(); });
