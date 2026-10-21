@@ -28,7 +28,7 @@ runs:
     - uses: actions/checkout@v4
       with: {repository: dasmig/occupation-generator, ref: v3.0.1, path: libs/occupation-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/persona-generator, ref: v4.0.0, path: libs/persona-generator}
+      with: {repository: dasmig/persona-generator, ref: v4.1.0, path: libs/persona-generator}
     - uses: actions/checkout@v4
       with: {repository: dasmig/phone-generator, ref: v2.1.1, path: libs/phone-generator}
     - uses: actions/checkout@v4
