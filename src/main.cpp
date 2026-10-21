@@ -42,7 +42,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.1.0"
+#define DASMIG_GEN_VERSION "3.2.0"
 #endif
 
 namespace
