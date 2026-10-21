@@ -42,7 +42,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.2.0"
+#define DASMIG_GEN_VERSION "3.3.0"
 #endif
 
 namespace
@@ -96,6 +96,8 @@ Request options (the ones a kind understands; the rest is drawn):
   --region NAME      UN geoscheme region            (country)
   --up N, --down N   generations above and below the person (default 1 each) (family; persona with --relations)
   --relations        also draw the persona's family (parents, siblings, partners, children) as "relatives" (persona)
+  --stepparents      also a parent's new partner, as stepfather or stepmother (family; persona with --relations)
+  --home             also who the person lives with, as "household" (family; persona with --relations)
   --uniform          uniform instead of population-weighted choice (city, country, birth, family)
   --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user)
   --unique KEY       no two items share the key: email or username (user)
@@ -213,7 +215,7 @@ arguments parse_arguments(int argc, char** argv)
             inline_value = name.substr(eq + 1);
             name.resize(eq);
         }
-        if (name == "uniform" || name == "safe" || name == "relations")
+        if (name == "uniform" || name == "safe" || name == "relations" || name == "stepparents" || name == "home")
         {
             args.flags.insert(name);
             continue;
@@ -245,7 +247,7 @@ arguments parse_arguments(int argc, char** argv)
 
 // The options a kind understands; any other request option is an error.
 const std::map<std::string, std::set<std::string>> accepted{
-    {"persona", {"country", "sex", "age", "reference-date", "traits", "uniform", "relations", "up", "down"}},
+    {"persona", {"country", "sex", "age", "reference-date", "traits", "uniform", "relations", "up", "down", "stepparents", "home"}},
     {"name", {"country", "gender"}},
     {"surname", {"country", "gender"}},
     {"nickname", {"name"}},
@@ -257,7 +259,7 @@ const std::map<std::string, std::set<std::string>> accepted{
     {"interest", {"country", "sex", "age"}},
     {"occupation", {"country", "sex", "age"}},
     {"user", {"country", "sex", "age", "reference-date", "safe", "unique"}},
-    {"family", {"country", "sex", "age", "reference-date", "uniform", "up", "down"}}};
+    {"family", {"country", "sex", "age", "reference-date", "uniform", "up", "down", "stepparents", "home"}}};
 
 void check_request_options(const arguments& args)
 {
@@ -270,8 +272,12 @@ void check_request_options(const arguments& args)
     for (const auto& name : args.flags)
         if (!ok.contains(name)) throw usage_error("--" + name + " does not apply to " + args.kind);
     if (args.kind == "persona" && !args.flags.contains("relations"))
+    {
         for (const char* name : {"up", "down"})
             if (args.request.contains(name)) throw usage_error(std::string{"--"} + name + " needs --relations for persona");
+        for (const char* name : {"stepparents", "home"})
+            if (args.flags.contains(name)) throw usage_error(std::string{"--"} + name + " needs --relations for persona");
+    }
 }
 
 std::optional<std::string> get(const arguments& args, const std::string& key)
@@ -446,6 +452,8 @@ int run(const arguments& args)
             dasmig::family_request family;
             if (const auto up = get(args, "up")) family.up = static_cast<int>(parse_count(*up, "--up"));
             if (const auto down = get(args, "down")) family.down = static_cast<int>(parse_count(*down, "--down"));
+            family.stepparents = args.flags.contains("stepparents");
+            family.home = args.flags.contains("home");
             request.relations = family;
         }
         const auto& gen = dasmig::psg::instance();
@@ -561,6 +569,8 @@ int run(const arguments& args)
         if (const auto up = get(args, "up")) request.up = static_cast<int>(parse_count(*up, "--up"));
         if (const auto down = get(args, "down")) request.down = static_cast<int>(parse_count(*down, "--down"));
         request.weighted = !uniform;
+        request.stepparents = args.flags.contains("stepparents");
+        request.home = args.flags.contains("home");
         const auto& gen = dasmig::relg::instance();
         emit(args.format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_family(request, s).to_json(); });

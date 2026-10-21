@@ -24,7 +24,7 @@ KNOWN = {
     ("name", "2a"): "92523b6a46b7abfb0df42cedcac244cfccb4c5e358e8cd9dd4fb35e28f2987c9",
     ("city", "3"): "18363ff56b0229a14f7544258d3fc26e17c95d398a18683e605da11340f86aef",
     ("occupation", "4"): "a3a8e38268b29c82c38bda278d69ac1930ecabc236f5dbd61ddd0fb0f2c1a605",
-    ("family", "6"): "964afc0f49de81145b3682cde557963ceff9dd66a1de61fa64fb939b52111fee",
+    ("family", "6"): "086654befa2efa30e64e440909bcb3a04bc914f10ac2bd7806f85200b9e79588",
     ("user", "5"): "ced64388c6f120352a8c599858a978ecc852a1b92bdd676e3cb087e588b523b9",
 }
 
@@ -60,7 +60,7 @@ for args in [[], ["nosuchkind"], ["persona", "--bogus"], ["persona", "--seed", "
              ["biodata", "--age", "20-30"], ["persona", "persona"],
              ["user", "--unique", "city"], ["city", "--unique", "email"], ["persona", "--safe"],
              ["family", "--traits", "3"], ["family", "--up", "x"], ["family", "--age", "20-30"],
-             ["persona", "--up", "1"], ["persona", "--down", "1"], ["name", "--relations"], ["family", "--relations"]]:
+             ["persona", "--up", "1"], ["persona", "--home"], ["persona", "--stepparents"], ["name", "--home"], ["persona", "--down", "1"], ["name", "--relations"], ["family", "--relations"]]:
     result = run(*args, expect=2)
     check(b"dasmig-gen:" in result.stderr, f"usage error message for {args}")
 run("persona", "--country", "XX", "--count", "1", "--seed", "1", expect=1)
@@ -141,6 +141,18 @@ check(all({m["role"] for m in p["relatives"]["members"]} <= {"anchor", "partner"
 check(all(any(m["role"] == "anchor" and m["name"]["full"] == p["name"] and m["age"] == p["age"]
               for m in p["relatives"]["members"]) for p in with_family),
       "the anchor of the relatives is the persona")
+# --stepparents and --home are off by default and add to the family
+homed = [json.loads(r) for r in lines(run("persona", "--count", "300", "--seed", "1f", "--relations",
+                                          "--stepparents", "--home").stdout)]
+check(all("household" in p["relatives"] and p["relatives"]["household"]["members"][0] == 0 for p in homed),
+      "persona --home has a household")
+check(all("household" not in p["relatives"] for p in with_family), "no household by default")
+check(any(m["role"] in ("stepfather", "stepmother") for p in homed for m in p["relatives"]["members"]),
+      "persona --stepparents has stepparents")
+fam_plain = lines(run("family", "--count", "20", "--seed", "3").stdout)
+fam_home = [json.loads(r) for r in lines(run("family", "--count", "20", "--seed", "3", "--home").stdout)]
+check(all("household" in f for f in fam_home) and all("household" not in json.loads(r) for r in fam_plain),
+      "family --home")
 for row in lines(run("city", "--count", "20", "--seed", "2", "--country", "jp", "--uniform").stdout):
     check(json.loads(row)["country_code"] == "JP", "city country")
 for row in lines(run("country", "--count", "20", "--seed", "2", "--region", "Europe").stdout):
