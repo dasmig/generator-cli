@@ -17,7 +17,7 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 
 | Kind | What it generates | Request options |
 | --- | --- | --- |
-| `persona` | A complete character: name, country, city, birth, body, personality, interests, job | `--country --sex --age --reference-date --traits --relations --up --down` |
+| `persona` | A complete character: name, country, city, birth, body, personality, interests, job | `--country --sex --age --reference-date --traits --relations --up --down --stepparents --home` |
 | `name`, `surname` | A given and family name, or a family name | `--country --gender` |
 | `nickname` | A nickname, from `--name` or the word lists | `--name` |
 | `city` | A city (GeoNames) | `--country --uniform` |
@@ -28,13 +28,13 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 | `interest` | Religion, hobbies and media | `--country --sex --age` |
 | `occupation` | Employment, education and job | `--country --sex --age` |
 | `user` | A user record: name, birth, address, phone, email and an account (username, password, dates, device, locale) | `--country --sex --age --reference-date --safe --unique` |
-| `family` | The people around a person: parents, siblings, partners and children, with ages, deaths and names by country | `--country --sex --age --reference-date --uniform --up --down` |
+| `family` | The people around a person: parents, siblings, partners and children, with ages, deaths and names by country | `--country --sex --age --reference-date --uniform --up --down --stepparents --home` |
 
 What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years, 0-120; `biodata`, `interest`, `occupation` and `family` take one age; `user` ages start at 13). Countries are ISO 3166-1 alpha-2 codes. The generator never reads the clock: pass `--reference-date YYYY-MM-DD` for ages as of a date.
 
 `family --up N --down N` sets how many generations above and below the person to generate (1 each by default; 0 leaves them out), and the person is the one `--country`, `--sex` and `--age` describe.
 
-`persona --relations` also draws the persona's family (parents, siblings, partners and children) into a `relatives` field, with `--up` and `--down` as for `family`. Nothing else about the persona changes, so the same seed gives the same persona with and without it.
+`persona --relations` also draws the persona's family (parents, siblings, partners and children) into a `relatives` field, with `--up`, `--down`, `--stepparents` and `--home` as for `family` (`--stepparents` adds a parent's new partner, `--home` adds who the person lives with as `household`; both are off by default and need `--relations` for a persona). Nothing else about the persona changes, so the same seed gives the same persona with and without it.
 
 `user --safe` makes contacts that reach no one (reserved email domains and, where a country has one, fictional phone numbers). `user --unique email` (or `username`) makes no two users share the key; the batch is still the same for any `--threads`.
 
