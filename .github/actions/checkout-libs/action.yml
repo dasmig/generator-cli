@@ -6,7 +6,7 @@ runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
-      with: {repository: dasmig/address-generator, ref: v2.0.1, path: libs/address-generator}
+      with: {repository: dasmig/address-generator, ref: v2.1.0, path: libs/address-generator}
     - uses: actions/checkout@v4
       with: {repository: dasmig/biodata-generator, ref: v5.0.0, path: libs/biodata-generator}
     - uses: actions/checkout@v4
@@ -18,7 +18,7 @@ runs:
     - uses: actions/checkout@v4
       with: {repository: dasmig/email-generator, ref: v2.1.1, path: libs/email-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/entity-generator, ref: v4.2.0, path: libs/entity-generator}
+      with: {repository: dasmig/entity-generator, ref: v4.2.1, path: libs/entity-generator}
     - uses: actions/checkout@v4
       with: {repository: dasmig/interest-generator, ref: v3.0.1, path: libs/interest-generator}
     - uses: actions/checkout@v4
