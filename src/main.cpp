@@ -42,7 +42,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.3.1"
+#define DASMIG_GEN_VERSION "3.3.2"
 #endif
 
 namespace
@@ -96,7 +96,7 @@ Request options (the ones a kind understands; the rest is drawn):
   --region NAME      UN geoscheme region            (country)
   --up N, --down N   generations above and below the person (default 1 each) (family; persona with --relations)
   --relations        also draw the persona's family (parents, siblings, partners, children) as "relatives" (persona)
-  --stepparents      also a parent's new partner, as stepfather or stepmother (family; persona with --relations)
+  --stepparents      also a parent's new partner, as stepfather or stepmother, and their children (family; persona with --relations)
   --home             also who the person lives with, as "household" (family; persona with --relations)
   --uniform          uniform instead of population-weighted choice (city, country, birth, family)
   --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user)

@@ -34,7 +34,7 @@ What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years
 
 `family --up N --down N` sets how many generations above and below the person to generate (1 each by default; 0 leaves them out), and the person is the one `--country`, `--sex` and `--age` describe.
 
-`persona --relations` also draws the persona's family (parents, siblings, partners and children) into a `relatives` field, with `--up`, `--down`, `--stepparents` and `--home` as for `family` (`--stepparents` adds a parent's new partner, `--home` adds who the person lives with as `household`; both are off by default and need `--relations` for a persona). Nothing else about the persona changes, so the same seed gives the same persona with and without it.
+`persona --relations` also draws the persona's family (parents, siblings, partners and children) into a `relatives` field, with `--up`, `--down`, `--stepparents` and `--home` as for `family` (`--stepparents` adds a parent's new partner, the children the parent had with them and their own children from before as `stepsibling`, `--home` adds who the person lives with as `household`; both are off by default and need `--relations` for a persona). Nothing else about the persona changes, so the same seed gives the same persona with and without it.
 
 `user --safe` makes contacts that reach no one (reserved email domains and, where a country has one, fictional phone numbers). `user --unique email` (or `username`) makes no two users share the key; the batch is still the same for any `--threads`.
 
