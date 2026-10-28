@@ -19,6 +19,7 @@
 #include <dasmig/relgen.hpp>
 #include <dasmig/traitgen.hpp>
 #include <dasmig/usergen.hpp>
+#include <dasmig/weathergen.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -43,7 +44,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.4.0"
+#define DASMIG_GEN_VERSION "3.5.0"
 #endif
 
 namespace
@@ -71,6 +72,7 @@ Kinds:
   user        a user record (name, birth, address, phone, email, account)
   device      a device: model, OS, browser, user agent, screen and IP address
   family      the people around a person (parents, siblings, partners, children)
+  weather     days of weather at a place (CRU TS normals, 1991-2020)
 
 Batch options (all kinds):
   --count N          number of items (default 1)
@@ -111,6 +113,20 @@ Request options (the ones a kind understands; the rest is drawn):
   --browser KEY      chrome, safari, edge, firefox, samsung, opera or yandex (device)
   --ip v4|v6|any     the IP family (device; default any, by the country's IPv6 share)
   --locale TAG       BCP 47 locale for the Accept-Language header (device)
+
+Weather options (an item is --days days at one place, one row per day):
+  --lat DEG, --lon DEG   the place (default: drawn by land area); set both or neither
+  --city             at a city drawn by population instead (with --country, in that country);
+                     each day gets the city as "city"
+  --start YYYY-MM-DD the first day (default 2023-07-01)
+  --days N           days per item, 1 to 36600 (default 1)
+  --units metric|imperial    °C, mm, cm, m/s (default) or °F, inches, mph
+  --elevation M      metres, -500 to 9000 (default: the climate cell's)
+  --warming C        °C added to every temperature, -10 to 10
+  --hourly           also each day's 24 hours, as "hours"
+  --historical       each month as it was in 1991-2020 (CRU TS), not around the normals; every
+                     day must fall in 1991-2020, and weather-generator/resources/history/history.tsv
+                     is read from --data-dir (default the current folder)
 
 Other:
   --help, --version
@@ -175,15 +191,22 @@ unsigned parse_single_age(const std::string& text)
     return ages.min;
 }
 
-std::chrono::year_month_day parse_date(const std::string& text)
+std::chrono::year_month_day parse_date(const std::string& text, const std::string& option = "--reference-date")
 {
-    if (text.size() != 10 || text[4] != '-' || text[7] != '-') throw usage_error("--reference-date must be YYYY-MM-DD");
-    const auto year = static_cast<int>(parse_count(text.substr(0, 4), "--reference-date"));
-    const auto month = static_cast<unsigned>(parse_count(text.substr(5, 2), "--reference-date"));
-    const auto day = static_cast<unsigned>(parse_count(text.substr(8, 2), "--reference-date"));
+    if (text.size() != 10 || text[4] != '-' || text[7] != '-') throw usage_error(option + " must be YYYY-MM-DD");
+    const auto year = static_cast<int>(parse_count(text.substr(0, 4), option));
+    const auto month = static_cast<unsigned>(parse_count(text.substr(5, 2), option));
+    const auto day = static_cast<unsigned>(parse_count(text.substr(8, 2), option));
     const std::chrono::year_month_day date{std::chrono::year{year}, std::chrono::month{month}, std::chrono::day{day}};
-    if (!date.ok() || year < 1900 || year > 2100) throw usage_error("--reference-date is not a calendar date from 1900 to 2100");
+    if (!date.ok() || year < 1900 || year > 2100) throw usage_error(option + " is not a calendar date from 1900 to 2100");
     return date;
+}
+
+double parse_decimal(const std::string& text, const std::string& option)
+{
+    const auto value = core::detail::parse_number<double>(text);
+    if (!value) throw usage_error(option + " must be a number");
+    return *value;
 }
 
 struct arguments
@@ -201,11 +224,12 @@ struct arguments
     std::set<std::string> flags;                // --uniform
 };
 
-const std::set<std::string> value_options{"country", "sex",  "age",    "reference-date", "traits",   "gender",
-                                          "name",    "region", "unique", "up",           "down",     "platform",
-                                          "browser", "ip",   "locale"};
-const std::set<std::string> kinds{"persona", "name",      "surname", "nickname", "city",       "country", "birth",
-                                  "biodata", "trait",     "interest", "occupation", "user",    "family",  "device"};
+const std::set<std::string> value_options{"country", "sex",   "age",    "reference-date", "traits",    "gender",
+                                          "name",    "region", "unique", "up",           "down",      "platform",
+                                          "browser", "ip",    "locale", "lat",          "lon",       "start",
+                                          "days",    "units", "elevation", "warming"};
+const std::set<std::string> kinds{"persona", "name",     "surname",  "nickname",   "city", "country", "birth",  "biodata",
+                                  "trait",   "interest", "occupation", "user",     "family", "device", "weather"};
 
 arguments parse_arguments(int argc, char** argv)
 {
@@ -227,7 +251,7 @@ arguments parse_arguments(int argc, char** argv)
             name.resize(eq);
         }
         if (name == "uniform" || name == "safe" || name == "relations" || name == "stepparents" || name == "home" ||
-            name == "device")
+            name == "device" || name == "city" || name == "hourly" || name == "historical")
         {
             args.flags.insert(name);
             continue;
@@ -272,7 +296,8 @@ const std::map<std::string, std::set<std::string>> accepted{
     {"occupation", {"country", "sex", "age"}},
     {"user", {"country", "sex", "age", "reference-date", "safe", "unique", "device"}},
     {"family", {"country", "sex", "age", "reference-date", "uniform", "up", "down", "stepparents", "home"}},
-    {"device", {"country", "reference-date", "platform", "browser", "ip", "locale", "safe", "unique", "uniform"}}};
+    {"device", {"country", "reference-date", "platform", "browser", "ip", "locale", "safe", "unique", "uniform"}},
+    {"weather", {"lat", "lon", "city", "country", "start", "days", "units", "elevation", "warming", "hourly", "historical"}}};
 
 void check_request_options(const arguments& args)
 {
@@ -290,6 +315,17 @@ void check_request_options(const arguments& args)
         throw usage_error("--ip must be v4, v6 or any");
     for (const auto& name : args.flags)
         if (!ok.contains(name)) throw usage_error("--" + name + " does not apply to " + args.kind);
+    if (args.kind == "weather")
+    {
+        if (args.request.contains("lat") != args.request.contains("lon")) throw usage_error("--lat and --lon go together");
+        if (args.flags.contains("city") && args.request.contains("lat"))
+            throw usage_error("--city draws the place; it does not go with --lat and --lon");
+        if (args.request.contains("country") && !args.flags.contains("city"))
+            throw usage_error("--country needs --city for weather");
+        if (const auto units = args.request.find("units");
+            units != args.request.end() && units->second != "metric" && units->second != "imperial")
+            throw usage_error("--units must be metric or imperial");
+    }
     if (args.kind == "persona" && !args.flags.contains("relations"))
     {
         for (const char* name : {"up", "down"})
@@ -392,6 +428,34 @@ void emit_keyed(const std::string& format, std::ostream& out, const core::batch_
     }
 }
 
+// The same as emit(), for items of several rows (a weather series): `make`
+// returns the rows' JSON, written in order.
+template <typename Make>
+void emit_rows(const std::string& format, std::ostream& out, const core::batch_options& options,
+               std::uint64_t seed, const Make& make)
+{
+    using rows = std::vector<std::string>;
+    if (format == "jsonl")
+    {
+        core::jsonl_writer writer{out};
+        core::for_each_batch(options, seed, make, [&writer](std::uint64_t, const rows& items)
+                             { for (const auto& json : items) writer.write_line(json); });
+    }
+    else if (format == "csv")
+    {
+        core::csv_writer writer{out};
+        core::for_each_batch(options, seed, make, [&writer](std::uint64_t, const rows& items)
+                             { for (const auto& json : items) writer.write_json(json); });
+    }
+    else
+    {
+        json_array_writer writer{out};
+        core::for_each_batch(options, seed, make, [&writer](std::uint64_t, const rows& items)
+                             { for (const auto& json : items) writer.add(json); });
+        writer.finish();
+    }
+}
+
 void load_full_tier(const arguments& args)
 {
     if (args.tier != "full") return;
@@ -408,7 +472,9 @@ void load_full_tier(const arguments& args)
     const auto wants = [&](const char* kind) { return all || is_user || args.kind == kind; };
     if (wants("name") || wants("surname") || is_family || all)
         check(dasmig::ng::instance().load(dasmig::dataset::full), "name-generator");
-    if (wants("city") || all) check(dasmig::cg::instance().load(dasmig::dataset::full), "city-generator");
+    const bool weather_city = args.kind == "weather" && args.flags.contains("city");
+    if (wants("city") || all || weather_city) check(dasmig::cg::instance().load(dasmig::dataset::full), "city-generator");
+    if (args.kind == "weather") check(dasmig::wtg::instance().load(dasmig::dataset::full), "weather-generator");
     if (wants("country") || all) check(dasmig::cntg::instance().load(dasmig::dataset::full), "country-generator");
     if (wants("birth") || is_family || all) check(dasmig::bthg::instance().load(dasmig::dataset::full), "birth-generator");
     if (is_family || (all && args.flags.contains("relations"))) check(dasmig::relg::instance().load(dasmig::dataset::full), "relationship-generator");
@@ -425,7 +491,7 @@ void load_full_tier(const arguments& args)
     if (args.kind == "device" || (is_user && args.flags.contains("device")))
         check(dasmig::dvg::instance().load(dasmig::dataset::full), "device-generator");
     if (wants("nickname")) check(dasmig::nng::instance().load(dasmig::dataset::full), "nickname-generator");
-    if (all || wants("city"))
+    if (all || wants("city") || weather_city)
     {
         const auto admin1 = std::filesystem::path{"city-generator"} / "resources" / "admin1CodesASCII.txt";
         auto& cities = dasmig::cg::instance();
@@ -433,10 +499,25 @@ void load_full_tier(const arguments& args)
     }
 }
 
+// The months of 1991-2020 for --historical, from --data-dir (or the current
+// folder) as the full tier is.
+void load_weather_history(const std::filesystem::path& base)
+{
+    const auto file = base / "weather-generator" / "resources" / "history" / "history.tsv";
+    auto& gen = dasmig::wtg::instance();
+    if (std::filesystem::is_regular_file(file)) gen.load_history(file);
+    else if (!gen.load_history())
+        throw std::runtime_error("--historical needs " + file.generic_string() +
+                                 "; give --data-dir the folder that holds the weather-generator checkout");
+}
+
 int run(const arguments& args)
 {
     check_request_options(args);
+    const auto data_base = args.data_dir.empty() ? std::filesystem::current_path()
+                                                 : std::filesystem::absolute(args.data_dir);
     load_full_tier(args);
+    if (args.kind == "weather" && args.flags.contains("historical")) load_weather_history(data_base);
 
     const std::uint64_t seed = args.seed ? *args.seed : core::rng::entropy_seed();
     if (!args.seed) std::fprintf(stderr, "seed: %s\n", hex16(seed).c_str());
@@ -616,6 +697,69 @@ int run(const arguments& args)
         const auto& gen = dasmig::relg::instance();
         emit(args.format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_family(request, s).to_json(); });
+    }
+    else if (args.kind == "weather")
+    {
+        dasmig::weather_request request;
+        if (const auto lat = get(args, "lat")) request.latitude = parse_decimal(*lat, "--lat");
+        if (const auto lon = get(args, "lon")) request.longitude = parse_decimal(*lon, "--lon");
+        if (const auto start = get(args, "start")) request.date = parse_date(*start, "--start");
+        if (const auto e = get(args, "elevation")) request.elevation = parse_decimal(*e, "--elevation");
+        if (const auto w = get(args, "warming")) request.warming = parse_decimal(*w, "--warming");
+        if (get(args, "units") == std::optional<std::string>{"imperial"}) request.units = dasmig::unit_system::imperial;
+        request.hourly = args.flags.contains("hourly");
+        request.historical = args.flags.contains("historical");
+        int days = 1;
+        if (const auto d = get(args, "days"))
+        {
+            const auto n = parse_count(*d, "--days");
+            if (n < 1 || n > static_cast<std::uint64_t>(dasmig::wtg::max_series_days)) throw usage_error("--days must be 1 to 36600");
+            days = static_cast<int>(n);
+        }
+        const bool at_city = args.flags.contains("city");
+        dasmig::city_request city_request;
+        if (country) city_request.country = upper(*country);
+        const auto& gen = dasmig::wtg::instance();
+        const auto& cities = dasmig::cg::instance();
+        emit_rows(args.format, out, options, seed,
+                  [&](std::uint64_t s)
+                  {
+                      auto r = request;
+                      std::string city_json;
+                      if (at_city)
+                      {
+                          // A city whose weather the data covers (a remote
+                          // island can be over 100 km from the land mask).
+                          const core::rng city_stream = core::rng{s}.split("city");
+                          for (std::uint64_t attempt = 0;; ++attempt)
+                          {
+                              if (attempt == 100) throw std::runtime_error("no city with weather data was drawn");
+                              const auto c = cities.get_city(city_request, city_stream.split(attempt).seed());
+                              try
+                              {
+                                  (void)gen.climate_at(c.latitude, c.longitude);
+                              }
+                              catch (const std::invalid_argument&)
+                              {
+                                  continue;
+                              }
+                              r.latitude = c.latitude;
+                              r.longitude = c.longitude;
+                              core::json_writer w;
+                              w.begin_object().field("name", c.name).field("country_code", c.country_code).end_object();
+                              city_json = "{\"city\":" + w.str() + ",";
+                              break;
+                          }
+                      }
+                      std::vector<std::string> rows;
+                      for (const auto& day : gen.get_weather_series(r, days, s))
+                      {
+                          auto json = day.to_json();
+                          if (!city_json.empty()) json = city_json + json.substr(1);
+                          rows.push_back(std::move(json));
+                      }
+                      return rows;
+                  });
     }
     else // occupation
     {
