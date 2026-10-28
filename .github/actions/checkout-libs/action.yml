@@ -6,36 +6,38 @@ runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
-      with: {repository: dasmig/address-generator, ref: v2.1.0, path: libs/address-generator}
+      with: {repository: dasmig/address-generator, ref: v2.1.1, path: libs/address-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/biodata-generator, ref: v5.0.0, path: libs/biodata-generator}
+      with: {repository: dasmig/biodata-generator, ref: v5.0.1, path: libs/biodata-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/birth-generator, ref: v3.2.0, path: libs/birth-generator}
+      with: {repository: dasmig/birth-generator, ref: v3.2.1, path: libs/birth-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/city-generator, ref: v4.2.0, path: libs/city-generator}
+      with: {repository: dasmig/city-generator, ref: v4.2.1, path: libs/city-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/country-generator, ref: v3.2.0, path: libs/country-generator}
+      with: {repository: dasmig/country-generator, ref: v3.2.1, path: libs/country-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/device-generator, ref: v1.0.2, path: libs/device-generator}
+      with: {repository: dasmig/device-generator, ref: v1.0.3, path: libs/device-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/email-generator, ref: v2.1.1, path: libs/email-generator}
+      with: {repository: dasmig/email-generator, ref: v2.1.2, path: libs/email-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/entity-generator, ref: v4.2.1, path: libs/entity-generator}
+      with: {repository: dasmig/entity-generator, ref: v4.2.2, path: libs/entity-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/interest-generator, ref: v3.0.1, path: libs/interest-generator}
+      with: {repository: dasmig/interest-generator, ref: v3.0.2, path: libs/interest-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/name-generator, ref: v4.5.0, path: libs/name-generator}
+      with: {repository: dasmig/name-generator, ref: v4.5.1, path: libs/name-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/nickname-generator, ref: v5.2.0, path: libs/nickname-generator}
+      with: {repository: dasmig/nickname-generator, ref: v5.2.1, path: libs/nickname-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/occupation-generator, ref: v3.0.1, path: libs/occupation-generator}
+      with: {repository: dasmig/occupation-generator, ref: v3.0.2, path: libs/occupation-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/persona-generator, ref: v4.1.1, path: libs/persona-generator}
+      with: {repository: dasmig/persona-generator, ref: v4.1.2, path: libs/persona-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/phone-generator, ref: v2.1.1, path: libs/phone-generator}
+      with: {repository: dasmig/phone-generator, ref: v2.1.2, path: libs/phone-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/relationship-generator, ref: v1.2.0, path: libs/relationship-generator}
+      with: {repository: dasmig/relationship-generator, ref: v1.2.1, path: libs/relationship-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/trait-generator, ref: v2.1.2, path: libs/trait-generator}
+      with: {repository: dasmig/trait-generator, ref: v2.1.3, path: libs/trait-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/user-generator, ref: v2.1.0, path: libs/user-generator}
+      with: {repository: dasmig/user-generator, ref: v2.1.1, path: libs/user-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/weather-generator, ref: v1.1.0, path: libs/weather-generator}

@@ -9,6 +9,7 @@ dasmig-gen persona --count 100000 --seed 1f --format jsonl --threads 0 --out peo
 dasmig-gen persona --country BR --sex female --age 25-40 --count 1000 --format csv --out brazil.csv
 dasmig-gen name --country DE --gender f --count 20
 dasmig-gen city --country JP --count 50 --uniform --format json
+dasmig-gen weather --lat 48.85 --lon 2.35 --start 2024-01-01 --days 366 --seed 7 --format csv
 ```
 
 Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are attached to each [release](https://github.com/dasmig/generator-cli/releases), with `SHA256SUMS`.
@@ -30,6 +31,7 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 | `user` | A user record: name, birth, address, phone, email and an account (username, password, dates, device, locale) | `--country --sex --age --reference-date --safe --unique --device` |
 | `family` | The people around a person: parents, siblings, partners and children, with ages, deaths and names by country | `--country --sex --age --reference-date --uniform --up --down --stepparents --home` |
 | `device` | A device whose model, OS, browser, user agent, client hints, screen and IP address fit together at a date | `--country --reference-date --platform --browser --ip --locale --safe --unique --uniform` |
+| `weather` | Days of weather at a place: temperatures, precipitation and its form, thunder, cloud, humidity, wind, sun and the day in a word | `--lat --lon --city --country --start --days --units --elevation --warming --hourly --historical` |
 
 What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years, 0-120; `biodata`, `interest`, `occupation` and `family` take one age; `user` ages start at 13). Countries are ISO 3166-1 alpha-2 codes. The generator never reads the clock: pass `--reference-date YYYY-MM-DD` for ages as of a date.
 
@@ -38,6 +40,8 @@ What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years
 `persona --relations` also draws the persona's family (parents, siblings, partners and children) into a `relatives` field, with `--up`, `--down`, `--stepparents` and `--home` as for `family` (`--stepparents` adds a parent's new partner, the children the parent had with them and their own children from before as `stepsibling`, `--home` adds who the person lives with as `household`; both are off by default and need `--relations` for a persona). Nothing else about the persona changes, so the same seed gives the same persona with and without it.
 
 `user --safe` makes contacts that reach no one (reserved email domains and, where a country has one, fictional phone numbers). `user --unique email` (or `username`) makes no two users share the key; the batch is still the same for any `--threads`. `user --device` adds the device of each user's last sign-in as `device`, on the account's platform and locale; nothing else about the user changes.
+
+`weather` items are `--days` consecutive days (1 by default, up to 36,600) at one place from `--start` (2023-07-01 by default), one row per day. The place is `--lat` and `--lon`, or with `--city` a city drawn by population (in the `--country` given), whose name goes in each day as `city`, or else a point drawn by land area. A day depends only on the seed, the place and the date, so the 18th of a series from the 15th is the same as `--start` on the 18th with the same item seed. `--units imperial` gives °F, inches and mph; `--elevation` (metres) and `--warming` (°C) move the temperatures; `--hourly` adds each day's 24 hours as `hours` (one CSV cell). `--historical` draws each month of 1991-2020 as it was (a cold January cold) and needs `weather-generator/resources/history/history.tsv` under `--data-dir` (the current folder by default), since the 23 MB table is not built in. A point more than 100 km from land is an error. See [weather-generator](https://github.com/dasmig/weather-generator).
 
 `device --platform` takes a platform key (`android-phone`, `ios-phone`, `windows-desktop`, `macos-desktop`, `ipad`, `android-tablet`, `linux-desktop`, `chromeos-desktop`, `other`) and `--browser` a browser key (`chrome`, `safari`, `edge`, `firefox`, `samsung`, `opera`, `yandex`); a browser that does not run on the platform is an error. `--reference-date` is the date the models and versions are those of (2021-01-01 or later; 2023-07-01 by default), `--ip v4`, `v6` or `any` (by the country's IPv6 share) the address family, `--locale` a BCP 47 tag for the `Accept-Language` header, and `--safe` takes addresses from the documentation ranges. `--unique ip` makes no two devices share an address.
 
@@ -78,8 +82,9 @@ The libraries are header-only siblings, so a build needs them next to this repos
 
 ```
 git clone https://github.com/dasmig/generator-cli
-# clone the seventeen repositories it uses beside it (address, biodata, birth, city, country, device, email,
-# entity, interest, name, nickname, occupation, persona, phone, relationship, trait, user: dasmig/<name>-generator)
+# clone the eighteen repositories it uses beside it (address, biodata, birth, city, country, device, email,
+# entity, interest, name, nickname, occupation, persona, phone, relationship, trait, user, weather:
+# dasmig/<name>-generator)
 cd generator-cli
 make            # build/dasmig-gen (clang++; CXX=g++-14 for GCC)
 make test       # python3 tests/test_cli.py

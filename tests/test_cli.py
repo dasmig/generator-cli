@@ -17,7 +17,7 @@ from pathlib import Path
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else "build/dasmig-gen"
 KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "biodata", "trait", "interest",
-         "occupation", "user", "family", "device"]
+         "occupation", "user", "family", "device", "weather"]
 
 KNOWN = {
     ("persona", "1f"): "4f5aaf6a50517742898a15a1a71da8a827fe86066d7a77b5a3488e555b35db8a",
@@ -27,7 +27,10 @@ KNOWN = {
     ("family", "6"): "086654befa2efa30e64e440909bcb3a04bc914f10ac2bd7806f85200b9e79588",
     ("user", "5"): "ced64388c6f120352a8c599858a978ecc852a1b92bdd676e3cb087e588b523b9",
     ("device", "9"): "503a080797d53c0db050c6497424f68cee1fa3b6019cf1d9278f671ec175678f",
+    ("weather", "b"): "09d374c8b118cfaf71dc9dd4b85ae7f4dd9d662439eac5b41d2d7e5de4ff4ca1",
 }
+# weather --lat 35.68 --lon 139.69 --start 2024-03-01 --days 60 --hourly --units imperial --seed c, 20 items.
+KNOWN_WEATHER_SERIES = "4920fe9a7f5bc5bf7dc93597cfe493438eca9c2704b14aa3f37d436a226b1de3"
 # user --device --seed 5: the user known output above, with each user's device.
 KNOWN_USER_DEVICE = "021aa999ba6263a54d5399b94ef496b3c0e3ed1fd3e1c833519c078550030015"
 
@@ -66,7 +69,12 @@ for args in [[], ["nosuchkind"], ["persona", "--bogus"], ["persona", "--seed", "
              ["persona", "--up", "1"], ["persona", "--home"], ["persona", "--stepparents"], ["name", "--home"], ["persona", "--down", "1"], ["name", "--relations"], ["family", "--relations"],
              ["device", "--ip", "v5"], ["device", "--unique", "email"], ["user", "--unique", "ip"],
              ["device", "--sex", "male"], ["device", "--age", "30"], ["name", "--platform", "ipad"],
-             ["persona", "--device"], ["device", "--device"], ["user", "--browser", "chrome"]]:
+             ["persona", "--device"], ["device", "--device"], ["user", "--browser", "chrome"],
+             ["weather", "--lat", "10"], ["weather", "--lon", "10"], ["weather", "--lat", "x", "--lon", "1"],
+             ["weather", "--city", "--lat", "1", "--lon", "1"], ["weather", "--country", "FR"],
+             ["weather", "--units", "kelvin"], ["weather", "--days", "0"], ["weather", "--days", "36601"],
+             ["weather", "--start", "2023-13-01"], ["weather", "--sex", "male"], ["city", "--hourly"],
+             ["persona", "--lat", "1"]]:
     result = run(*args, expect=2)
     check(b"dasmig-gen:" in result.stderr, f"usage error message for {args}")
 run("persona", "--country", "XX", "--count", "1", "--seed", "1", expect=1)
@@ -75,6 +83,8 @@ run("device", "--platform", "nope", "--count", "1", "--seed", "1", expect=1)
 run("device", "--platform", "ipad", "--browser", "samsung", "--count", "1", "--seed", "1", expect=1)
 run("device", "--reference-date", "2020-12-31", "--count", "1", "--seed", "1", expect=1)
 run("device", "--locale", "not a tag", "--count", "1", "--seed", "1", expect=1)
+run("weather", "--lat", "40", "--lon", "-40", "--seed", "1", expect=1)  # mid-Atlantic
+run("weather", "--lat", "48.85", "--lon", "2.35", "--warming", "11", "--seed", "1", expect=1)
 check(run("persona", "--tier", "full", "--data-dir", tempfile.gettempdir(), "--count", "1", "--seed", "1",
           expect=1).returncode == 1, "a missing full tier is an error")
 
@@ -96,7 +106,7 @@ for kind in KINDS:
     check(run(kind, "--count", "2", "--seed", seed).stdout == unseeded.stdout, f"{kind}: replay from the printed seed")
 
 # --- the output does not depend on threads; ranges and splits agree ---
-for kind in ("persona", "name", "city", "family", "device"):
+for kind in ("persona", "name", "city", "family", "device", "weather"):
     base = run(kind, "--count", "300", "--seed", "1f", "--threads", "1").stdout
     for threads in ("2", "7", "0"):
         check(run(kind, "--count", "300", "--seed", "1f", "--threads", threads).stdout == base,
@@ -227,6 +237,43 @@ for row in lines(run("family", "--count", "5", "--seed", "3", "--country", "JP",
 check(any(m["role"] == "child" for row in lines(run("family", "--count", "50", "--seed", "3", "--down", "1").stdout)
           for m in json.loads(row)["members"]), "family children")
 
+# --- weather: series, units, hours, cities and history ---
+paris = ["--lat", "48.85", "--lon", "2.35", "--start", "2024-01-15"]
+week = [json.loads(r) for r in lines(run("weather", *paris, "--days", "7", "--count", "2", "--seed", "9").stdout)]
+check(len(week) == 14 and [d["date"] for d in week[:7]] == [f"2024-01-{d}" for d in range(15, 22)],
+      "weather: --days gives each item's days in order")
+check(week[0]["signature"]["seed"] != week[7]["signature"]["seed"], "weather: items have their own seeds")
+# A day of a series is the single day with the item's seed (the series does not change a day).
+later = json.loads(run("weather", "--lat", "48.85", "--lon", "2.35", "--start", "2024-01-18", "--seed", "9").stdout)
+check(later == week[3], "weather: a day alone equals the day in its series")
+metric = json.loads(run("weather", *paris, "--seed", "4").stdout)
+imperial = json.loads(run("weather", *paris, "--seed", "4", "--units", "imperial").stdout)
+check(imperial["units"] == "imperial" and "units" not in metric
+      and abs(imperial["tmax"] - (metric["tmax"] * 1.8 + 32)) < 0.2, "weather: --units imperial")
+hourly = json.loads(run("weather", *paris, "--seed", "4", "--hourly").stdout)
+check(len(hourly["hours"]) == 24 and {k: v for k, v in hourly.items() if k != "hours"} == metric,
+      "weather: --hourly adds the hours and changes nothing else")
+check(round(sum(h["precipitation"] for h in hourly["hours"]), 1) == metric["precipitation"], "weather: hours add up")
+check(len(lines(run("weather", *paris, "--seed", "4", "--hourly", "--format", "csv").stdout)) == 2,
+      "weather: csv keeps the hours in one column")
+for row in lines(run("weather", "--city", "--country", "br", "--count", "20", "--seed", "3").stdout):
+    w = json.loads(row)
+    check(w["city"]["country_code"] == "BR" and w["place"]["distance_km"] <= 100, "weather: --city --country")
+history = next((d for d in (Path(".."), Path("libs"))
+                if (d / "weather-generator" / "resources" / "history" / "history.tsv").is_file()), None)
+if history is not None:
+    jan = [json.loads(r) for r in lines(run("weather", "--lat", "48.85", "--lon", "2.35", "--start", "2010-01-01",
+                                            "--days", "31", "--count", "20", "--seed", "1", "--historical",
+                                            "--data-dir", str(history)).stdout)]
+    normal = [json.loads(r) for r in lines(run("weather", "--lat", "48.85", "--lon", "2.35", "--start", "2010-01-01",
+                                               "--days", "31", "--count", "20", "--seed", "1").stdout)]
+    mean = lambda days: sum(d["tmean"] for d in days) / len(days)
+    check(mean(jan) < mean(normal) - 2, f"weather: January 2010 in Paris was cold ({mean(jan):.1f} vs {mean(normal):.1f})")
+    run("weather", "--lat", "48.85", "--lon", "2.35", "--start", "2021-01-01", "--historical",
+        "--data-dir", str(history), "--seed", "1", expect=1)
+else:
+    print("note: no weather-generator checkout with history.tsv next to the CLI; --historical not tested")
+
 # --- known outputs, the same on every platform ---
 for (kind, seed), digest in KNOWN.items():
     data = run(kind, "--count", "1000", "--seed", seed, "--threads", "4").stdout
@@ -234,10 +281,13 @@ for (kind, seed), digest in KNOWN.items():
     check(got == digest, f"{kind} --seed {seed}: sha256 {got} != {digest}")
 got = hashlib.sha256(run("user", "--device", "--count", "1000", "--seed", "5", "--threads", "4").stdout).hexdigest()
 check(got == KNOWN_USER_DEVICE, f"user --device --seed 5: sha256 {got} != {KNOWN_USER_DEVICE}")
+got = hashlib.sha256(run("weather", "--lat", "35.68", "--lon", "139.69", "--start", "2024-03-01", "--days", "60",
+                         "--hourly", "--units", "imperial", "--count", "20", "--seed", "c", "--threads", "4").stdout).hexdigest()
+check(got == KNOWN_WEATHER_SERIES, f"weather series --seed c: sha256 {got} != {KNOWN_WEATHER_SERIES}")
 
 if failures:
     print("FAIL")
     for failure in failures:
         print(" -", failure)
     sys.exit(1)
-print("PASS: dasmig-gen usage errors, 14 kinds, thread invariance, ranges, formats, requests and known outputs.")
+print("PASS: dasmig-gen usage errors, 15 kinds, thread invariance, ranges, formats, requests and known outputs.")
