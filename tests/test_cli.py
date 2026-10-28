@@ -17,7 +17,7 @@ from pathlib import Path
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else "build/dasmig-gen"
 KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "biodata", "trait", "interest",
-         "occupation", "user", "family"]
+         "occupation", "user", "family", "device"]
 
 KNOWN = {
     ("persona", "1f"): "4f5aaf6a50517742898a15a1a71da8a827fe86066d7a77b5a3488e555b35db8a",
@@ -26,7 +26,10 @@ KNOWN = {
     ("occupation", "4"): "a3a8e38268b29c82c38bda278d69ac1930ecabc236f5dbd61ddd0fb0f2c1a605",
     ("family", "6"): "086654befa2efa30e64e440909bcb3a04bc914f10ac2bd7806f85200b9e79588",
     ("user", "5"): "ced64388c6f120352a8c599858a978ecc852a1b92bdd676e3cb087e588b523b9",
+    ("device", "9"): "503a080797d53c0db050c6497424f68cee1fa3b6019cf1d9278f671ec175678f",
 }
+# user --device --seed 5: the user known output above, with each user's device.
+KNOWN_USER_DEVICE = "021aa999ba6263a54d5399b94ef496b3c0e3ed1fd3e1c833519c078550030015"
 
 failures = []
 
@@ -60,11 +63,18 @@ for args in [[], ["nosuchkind"], ["persona", "--bogus"], ["persona", "--seed", "
              ["biodata", "--age", "20-30"], ["persona", "persona"],
              ["user", "--unique", "city"], ["city", "--unique", "email"], ["persona", "--safe"],
              ["family", "--traits", "3"], ["family", "--up", "x"], ["family", "--age", "20-30"],
-             ["persona", "--up", "1"], ["persona", "--home"], ["persona", "--stepparents"], ["name", "--home"], ["persona", "--down", "1"], ["name", "--relations"], ["family", "--relations"]]:
+             ["persona", "--up", "1"], ["persona", "--home"], ["persona", "--stepparents"], ["name", "--home"], ["persona", "--down", "1"], ["name", "--relations"], ["family", "--relations"],
+             ["device", "--ip", "v5"], ["device", "--unique", "email"], ["user", "--unique", "ip"],
+             ["device", "--sex", "male"], ["device", "--age", "30"], ["name", "--platform", "ipad"],
+             ["persona", "--device"], ["device", "--device"], ["user", "--browser", "chrome"]]:
     result = run(*args, expect=2)
     check(b"dasmig-gen:" in result.stderr, f"usage error message for {args}")
 run("persona", "--country", "XX", "--count", "1", "--seed", "1", expect=1)
 run("user", "--age", "5-10", "--count", "1", "--seed", "1", expect=1)
+run("device", "--platform", "nope", "--count", "1", "--seed", "1", expect=1)
+run("device", "--platform", "ipad", "--browser", "samsung", "--count", "1", "--seed", "1", expect=1)
+run("device", "--reference-date", "2020-12-31", "--count", "1", "--seed", "1", expect=1)
+run("device", "--locale", "not a tag", "--count", "1", "--seed", "1", expect=1)
 check(run("persona", "--tier", "full", "--data-dir", tempfile.gettempdir(), "--count", "1", "--seed", "1",
           expect=1).returncode == 1, "a missing full tier is an error")
 
@@ -86,7 +96,7 @@ for kind in KINDS:
     check(run(kind, "--count", "2", "--seed", seed).stdout == unseeded.stdout, f"{kind}: replay from the printed seed")
 
 # --- the output does not depend on threads; ranges and splits agree ---
-for kind in ("persona", "name", "city", "family"):
+for kind in ("persona", "name", "city", "family", "device"):
     base = run(kind, "--count", "300", "--seed", "1f", "--threads", "1").stdout
     for threads in ("2", "7", "0"):
         check(run(kind, "--count", "300", "--seed", "1f", "--threads", threads).stdout == base,
@@ -178,6 +188,32 @@ for key, field in (("email", lambda u: u["email"]["address"]), ("username", lamb
                                               "--unique", key, "--threads", "3").stdout)]
     check(len(batch) == 2000 and len({field(u) for u in batch}) == 2000, f"user unique {key}")
 
+# --- device: the request, safe addresses and unique keys; user --device ---
+for row in lines(run("device", "--count", "30", "--seed", "2", "--country", "br", "--platform", "ios-phone",
+                     "--browser", "safari", "--locale", "pt-BR", "--ip", "v4", "--reference-date", "2025-03-01").stdout):
+    d = json.loads(row)
+    check(d["country_code"] == "BR" and d["platform"] == "ios-phone" and d["os"] == "iOS" and d["browser"] == "safari"
+          and d["ip_version"] == 4 and d["accept_language"].startswith("pt-BR") and "iPhone" in d["user_agent"],
+          "device request fields")
+check(all(json.loads(r)["ip_version"] == 6 for r in lines(run("device", "--count", "30", "--seed", "2", "--country",
+                                                             "US", "--ip", "v6").stdout)), "device --ip v6")
+safe = [json.loads(r) for r in lines(run("device", "--count", "50", "--seed", "4", "--safe").stdout)]
+check(len(safe) == 50 and all(d["reserved"] for d in safe), "device --safe")
+check(not any(json.loads(r)["reserved"] for r in lines(run("device", "--count", "50", "--seed", "4").stdout)),
+      "device addresses are not reserved by default")
+uniform = [json.loads(r) for r in lines(run("device", "--count", "300", "--seed", "4", "--uniform").stdout)]
+check(len(uniform) == 300 and len({d["platform"] for d in uniform}) >= 8, "device --uniform reaches every platform")
+batch = [json.loads(r) for r in lines(run("device", "--count", "2000", "--seed", "7", "--country", "IS",
+                                          "--unique", "ip", "--threads", "3").stdout)]
+check(len(batch) == 2000 and len({d["ip"] for d in batch}) == 2000, "device unique ip")
+plain = [json.loads(r) for r in lines(run("user", "--count", "40", "--seed", "4", "--safe").stdout)]
+with_device = [json.loads(r) for r in lines(run("user", "--count", "40", "--seed", "4", "--safe", "--device").stdout)]
+check(all("device" not in u for u in plain), "user has no device by default")
+check(all(u["device"]["platform"] == u["account"]["platform"] and u["device"]["country_code"] == u["country"]["code"]
+          and u["device"]["reserved"] for u in with_device), "user --device follows the account; --safe reaches it")
+strip = lambda u: {k: v for k, v in u.items() if k not in ("device", "signature")}
+check([strip(u) for u in with_device] == [strip(u) for u in plain], "--device changes nothing else in a user")
+
 # --- family: the request and the generations ---
 for row in lines(run("family", "--count", "10", "--seed", "3", "--country", "br", "--sex", "female", "--age", "30",
                      "--up", "0", "--down", "0").stdout):
@@ -196,10 +232,12 @@ for (kind, seed), digest in KNOWN.items():
     data = run(kind, "--count", "1000", "--seed", seed, "--threads", "4").stdout
     got = hashlib.sha256(data).hexdigest()
     check(got == digest, f"{kind} --seed {seed}: sha256 {got} != {digest}")
+got = hashlib.sha256(run("user", "--device", "--count", "1000", "--seed", "5", "--threads", "4").stdout).hexdigest()
+check(got == KNOWN_USER_DEVICE, f"user --device --seed 5: sha256 {got} != {KNOWN_USER_DEVICE}")
 
 if failures:
     print("FAIL")
     for failure in failures:
         print(" -", failure)
     sys.exit(1)
-print("PASS: dasmig-gen usage errors, 13 kinds, thread invariance, ranges, formats, requests and known outputs.")
+print("PASS: dasmig-gen usage errors, 14 kinds, thread invariance, ranges, formats, requests and known outputs.")
