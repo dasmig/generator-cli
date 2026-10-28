@@ -10,6 +10,7 @@
 #include <dasmig/birthgen.hpp>
 #include <dasmig/citygen.hpp>
 #include <dasmig/countrygen.hpp>
+#include <dasmig/devicegen.hpp>
 #include <dasmig/interestgen.hpp>
 #include <dasmig/namegen.hpp>
 #include <dasmig/nicknamegen.hpp>
@@ -42,7 +43,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.3.2"
+#define DASMIG_GEN_VERSION "3.4.0"
 #endif
 
 namespace
@@ -68,6 +69,7 @@ Kinds:
   trait       a personality                    interest    religion, hobbies and media
   occupation  employment, education and job
   user        a user record (name, birth, address, phone, email, account)
+  device      a device: model, OS, browser, user agent, screen and IP address
   family      the people around a person (parents, siblings, partners, children)
 
 Batch options (all kinds):
@@ -85,11 +87,12 @@ Batch options (all kinds):
 
 Request options (the ones a kind understands; the rest is drawn):
   --country CC       ISO 3166-1 alpha-2 code        (persona, name, surname, city, birth,
-                                                     biodata, interest, occupation, user, family)
+                                                     biodata, interest, occupation, user, family, device)
   --sex male|female                                 (persona, birth, biodata, interest, occupation, user, family)
   --age N or MIN-MAX                                (persona, birth, biodata, interest, occupation, user;
                                                      biodata, interest, occupation and family take one age)
-  --reference-date YYYY-MM-DD   the date ages are computed at (persona, birth, user, family)
+  --reference-date YYYY-MM-DD   the date ages are computed at (persona, birth, user, family);
+                     for device, the date its models and versions are those of (2021-01-01 or later)
   --traits N         number of personality traits   (persona, trait)
   --gender m|f|any   (name, surname)
   --name TEXT        full name to derive from       (nickname)
@@ -98,9 +101,16 @@ Request options (the ones a kind understands; the rest is drawn):
   --relations        also draw the persona's family (parents, siblings, partners, children) as "relatives" (persona)
   --stepparents      also a parent's new partner, as stepfather or stepmother, and their children (family; persona with --relations)
   --home             also who the person lives with, as "household" (family; persona with --relations)
-  --uniform          uniform instead of population-weighted choice (city, country, birth, family)
-  --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user)
-  --unique KEY       no two items share the key: email or username (user)
+  --uniform          uniform instead of population-weighted choice (city, country, birth, family, device)
+  --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user);
+                     IP addresses from the documentation ranges (device, user --device)
+  --unique KEY       no two items share the key: email or username (user), ip (device)
+  --device           also the device of the user's last sign-in, as "device" (user)
+  --platform KEY     android-phone, ios-phone, windows-desktop, macos-desktop, ipad,
+                     android-tablet, linux-desktop, chromeos-desktop or other (device)
+  --browser KEY      chrome, safari, edge, firefox, samsung, opera or yandex (device)
+  --ip v4|v6|any     the IP family (device; default any, by the country's IPv6 share)
+  --locale TAG       BCP 47 locale for the Accept-Language header (device)
 
 Other:
   --help, --version
@@ -191,10 +201,11 @@ struct arguments
     std::set<std::string> flags;                // --uniform
 };
 
-const std::set<std::string> value_options{"country", "sex", "age", "reference-date", "traits", "gender",
-                                          "name",    "region", "unique", "up",     "down"};
-const std::set<std::string> kinds{"persona", "name",      "surname", "nickname", "city",     "country",
-                                  "birth",   "biodata",   "trait",   "interest", "occupation", "user",   "family"};
+const std::set<std::string> value_options{"country", "sex",  "age",    "reference-date", "traits",   "gender",
+                                          "name",    "region", "unique", "up",           "down",     "platform",
+                                          "browser", "ip",   "locale"};
+const std::set<std::string> kinds{"persona", "name",      "surname", "nickname", "city",       "country", "birth",
+                                  "biodata", "trait",     "interest", "occupation", "user",    "family",  "device"};
 
 arguments parse_arguments(int argc, char** argv)
 {
@@ -215,7 +226,8 @@ arguments parse_arguments(int argc, char** argv)
             inline_value = name.substr(eq + 1);
             name.resize(eq);
         }
-        if (name == "uniform" || name == "safe" || name == "relations" || name == "stepparents" || name == "home")
+        if (name == "uniform" || name == "safe" || name == "relations" || name == "stepparents" || name == "home" ||
+            name == "device")
         {
             args.flags.insert(name);
             continue;
@@ -258,17 +270,24 @@ const std::map<std::string, std::set<std::string>> accepted{
     {"trait", {"traits"}},
     {"interest", {"country", "sex", "age"}},
     {"occupation", {"country", "sex", "age"}},
-    {"user", {"country", "sex", "age", "reference-date", "safe", "unique"}},
-    {"family", {"country", "sex", "age", "reference-date", "uniform", "up", "down", "stepparents", "home"}}};
+    {"user", {"country", "sex", "age", "reference-date", "safe", "unique", "device"}},
+    {"family", {"country", "sex", "age", "reference-date", "uniform", "up", "down", "stepparents", "home"}},
+    {"device", {"country", "reference-date", "platform", "browser", "ip", "locale", "safe", "unique", "uniform"}}};
 
 void check_request_options(const arguments& args)
 {
     const auto& ok = accepted.at(args.kind);
     for (const auto& [name, _] : args.request)
         if (!ok.contains(name)) throw usage_error("--" + name + " does not apply to " + args.kind);
-    if (const auto unique = args.request.find("unique");
-        unique != args.request.end() && unique->second != "email" && unique->second != "username")
-        throw usage_error("--unique must be email or username");
+    if (const auto unique = args.request.find("unique"); unique != args.request.end())
+    {
+        if (args.kind == "device" && unique->second != "ip") throw usage_error("--unique must be ip for device");
+        if (args.kind == "user" && unique->second != "email" && unique->second != "username")
+            throw usage_error("--unique must be email or username");
+    }
+    if (const auto ip = args.request.find("ip");
+        ip != args.request.end() && ip->second != "v4" && ip->second != "v6" && ip->second != "any")
+        throw usage_error("--ip must be v4, v6 or any");
     for (const auto& name : args.flags)
         if (!ok.contains(name)) throw usage_error("--" + name + " does not apply to " + args.kind);
     if (args.kind == "persona" && !args.flags.contains("relations"))
@@ -403,6 +422,8 @@ void load_full_tier(const arguments& args)
         check(dasmig::emg::instance().load(dasmig::dataset::full), "email-generator");
         check(dasmig::usg::instance().load(dasmig::dataset::full), "user-generator");
     }
+    if (args.kind == "device" || (is_user && args.flags.contains("device")))
+        check(dasmig::dvg::instance().load(dasmig::dataset::full), "device-generator");
     if (wants("nickname")) check(dasmig::nng::instance().load(dasmig::dataset::full), "nickname-generator");
     if (all || wants("city"))
     {
@@ -550,6 +571,7 @@ int run(const arguments& args)
         if (age_text) request.ages = parse_ages(*age_text);
         if (date_text) request.reference_date = parse_date(*date_text);
         request.safe = args.flags.contains("safe");
+        request.device = args.flags.contains("device");
         const bool by_username = get(args, "unique") == std::optional<std::string>{"username"};
         const auto& gen = dasmig::usg::instance();
         emit_keyed(args.format, out, options, seed,
@@ -557,6 +579,26 @@ int run(const arguments& args)
                    {
                        const auto user = gen.get_user(request, s);
                        return keyed_json{user.to_json(), by_username ? user.account.username : user.mail.address()};
+                   });
+    }
+    else if (args.kind == "device")
+    {
+        dasmig::device_request request;
+        if (country) request.country = upper(*country);
+        if (date_text) request.reference_date = parse_date(*date_text);
+        if (const auto p = get(args, "platform")) request.platform = *p;
+        if (const auto b = get(args, "browser")) request.browser = *b;
+        if (const auto l = get(args, "locale")) request.locale = *l;
+        if (const auto ip = get(args, "ip"))
+            request.ip = *ip == "v4" ? dasmig::ip_version::v4 : *ip == "v6" ? dasmig::ip_version::v6 : dasmig::ip_version::any;
+        request.safe = args.flags.contains("safe");
+        request.weighted = !uniform;
+        const auto& gen = dasmig::dvg::instance();
+        emit_keyed(args.format, out, options, seed,
+                   [&](std::uint64_t s)
+                   {
+                       const auto device = gen.get_device(request, s);
+                       return keyed_json{device.to_json(), device.ip};
                    });
     }
     else if (args.kind == "family")

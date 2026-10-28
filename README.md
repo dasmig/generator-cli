@@ -27,8 +27,9 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 | `trait` | A personality | `--traits` |
 | `interest` | Religion, hobbies and media | `--country --sex --age` |
 | `occupation` | Employment, education and job | `--country --sex --age` |
-| `user` | A user record: name, birth, address, phone, email and an account (username, password, dates, device, locale) | `--country --sex --age --reference-date --safe --unique` |
+| `user` | A user record: name, birth, address, phone, email and an account (username, password, dates, device, locale) | `--country --sex --age --reference-date --safe --unique --device` |
 | `family` | The people around a person: parents, siblings, partners and children, with ages, deaths and names by country | `--country --sex --age --reference-date --uniform --up --down --stepparents --home` |
+| `device` | A device whose model, OS, browser, user agent, client hints, screen and IP address fit together at a date | `--country --reference-date --platform --browser --ip --locale --safe --unique --uniform` |
 
 What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years, 0-120; `biodata`, `interest`, `occupation` and `family` take one age; `user` ages start at 13). Countries are ISO 3166-1 alpha-2 codes. The generator never reads the clock: pass `--reference-date YYYY-MM-DD` for ages as of a date.
 
@@ -36,7 +37,9 @@ What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years
 
 `persona --relations` also draws the persona's family (parents, siblings, partners and children) into a `relatives` field, with `--up`, `--down`, `--stepparents` and `--home` as for `family` (`--stepparents` adds a parent's new partner, the children the parent had with them and their own children from before as `stepsibling`, `--home` adds who the person lives with as `household`; both are off by default and need `--relations` for a persona). Nothing else about the persona changes, so the same seed gives the same persona with and without it.
 
-`user --safe` makes contacts that reach no one (reserved email domains and, where a country has one, fictional phone numbers). `user --unique email` (or `username`) makes no two users share the key; the batch is still the same for any `--threads`.
+`user --safe` makes contacts that reach no one (reserved email domains and, where a country has one, fictional phone numbers). `user --unique email` (or `username`) makes no two users share the key; the batch is still the same for any `--threads`. `user --device` adds the device of each user's last sign-in as `device`, on the account's platform and locale; nothing else about the user changes.
+
+`device --platform` takes a platform key (`android-phone`, `ios-phone`, `windows-desktop`, `macos-desktop`, `ipad`, `android-tablet`, `linux-desktop`, `chromeos-desktop`, `other`) and `--browser` a browser key (`chrome`, `safari`, `edge`, `firefox`, `samsung`, `opera`, `yandex`); a browser that does not run on the platform is an error. `--reference-date` is the date the models and versions are those of (2021-01-01 or later; 2023-07-01 by default), `--ip v4`, `v6` or `any` (by the country's IPv6 share) the address family, `--locale` a BCP 47 tag for the `Accept-Language` header, and `--safe` takes addresses from the documentation ranges. `--unique ip` makes no two devices share an address.
 
 ## Batches
 
@@ -75,7 +78,7 @@ The libraries are header-only siblings, so a build needs them next to this repos
 
 ```
 git clone https://github.com/dasmig/generator-cli
-# clone the sixteen repositories it uses beside it (address, biodata, birth, city, country, email,
+# clone the seventeen repositories it uses beside it (address, biodata, birth, city, country, device, email,
 # entity, interest, name, nickname, occupation, persona, phone, relationship, trait, user: dasmig/<name>-generator)
 cd generator-cli
 make            # build/dasmig-gen (clang++; CXX=g++-14 for GCC)
