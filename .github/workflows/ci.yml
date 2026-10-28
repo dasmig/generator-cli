@@ -71,7 +71,7 @@ jobs:
         shell: cmd
         run: |
           mkdir build
-          cl /nologo /std:c++latest /EHsc /O2 /MT /W4 /permissive- /utf-8 /I. %MSVC_LIB_FLAGS% /Fobuild\ /Fe:build\dasmig-gen.exe src\main.cpp || exit /b 1
+          cl /nologo /std:c++latest /EHsc /O2 /MT /W4 /permissive- /utf-8 /bigobj /I. %MSVC_LIB_FLAGS% /Fobuild\ /Fe:build\dasmig-gen.exe src\main.cpp || exit /b 1
 
       - name: Test
         shell: bash
