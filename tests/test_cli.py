@@ -27,10 +27,10 @@ KNOWN = {
     ("family", "6"): "086654befa2efa30e64e440909bcb3a04bc914f10ac2bd7806f85200b9e79588",
     ("user", "5"): "ced64388c6f120352a8c599858a978ecc852a1b92bdd676e3cb087e588b523b9",
     ("device", "9"): "503a080797d53c0db050c6497424f68cee1fa3b6019cf1d9278f671ec175678f",
-    ("weather", "b"): "09d374c8b118cfaf71dc9dd4b85ae7f4dd9d662439eac5b41d2d7e5de4ff4ca1",
+    ("weather", "b"): "b02b26c0d3fb045f51d23a880c39d192479e4e5576451b639a3e28fbbc255f35",
 }
 # weather --lat 35.68 --lon 139.69 --start 2024-03-01 --days 60 --hourly --units imperial --seed c, 20 items.
-KNOWN_WEATHER_SERIES = "4920fe9a7f5bc5bf7dc93597cfe493438eca9c2704b14aa3f37d436a226b1de3"
+KNOWN_WEATHER_SERIES = "454fd34ed013d11f3242605a3faca61b925ee9536afec9a5d379c32427aeed3d"
 # user --device --seed 5: the user known output above, with each user's device.
 KNOWN_USER_DEVICE = "021aa999ba6263a54d5399b94ef496b3c0e3ed1fd3e1c833519c078550030015"
 
@@ -248,12 +248,16 @@ later = json.loads(run("weather", "--lat", "48.85", "--lon", "2.35", "--start", 
 check(later == week[3], "weather: a day alone equals the day in its series")
 metric = json.loads(run("weather", *paris, "--seed", "4").stdout)
 imperial = json.loads(run("weather", *paris, "--seed", "4", "--units", "imperial").stdout)
-check(imperial["units"] == "imperial" and "units" not in metric
+check(imperial["units"] == "imperial" and metric["units"] == "metric"
       and abs(imperial["tmax"] - (metric["tmax"] * 1.8 + 32)) < 0.2, "weather: --units imperial")
 hourly = json.loads(run("weather", *paris, "--seed", "4", "--hourly").stdout)
 check(len(hourly["hours"]) == 24 and {k: v for k, v in hourly.items() if k != "hours"} == metric,
       "weather: --hourly adds the hours and changes nothing else")
 check(round(sum(h["precipitation"] for h in hourly["hours"]), 1) == metric["precipitation"], "weather: hours add up")
+near = json.loads(run("weather", "--lat", "48.9", "--lon", "2.4", "--start", "2024-01-15", "--seed", "4").stdout)
+alone = json.loads(run("weather", "--lat", "48.9", "--lon", "2.4", "--start", "2024-01-15", "--seed", "4",
+                       "--no-spatial").stdout)
+check(near != alone and near["place"] == alone["place"], "weather: --no-spatial changes the weather, not the place")
 check(len(lines(run("weather", *paris, "--seed", "4", "--hourly", "--format", "csv").stdout)) == 2,
       "weather: csv keeps the hours in one column")
 for row in lines(run("weather", "--city", "--country", "br", "--count", "20", "--seed", "3").stdout):
