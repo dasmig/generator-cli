@@ -44,7 +44,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.5.0"
+#define DASMIG_GEN_VERSION "3.6.0"
 #endif
 
 namespace
@@ -127,6 +127,8 @@ Weather options (an item is --days days at one place, one row per day):
   --historical       each month as it was in 1991-2020 (CRU TS), not around the normals; every
                      day must fall in 1991-2020, and weather-generator/resources/history/history.tsv
                      is read from --data-dir (default the current folder)
+  --no-spatial       each climate cell's own weather; by default nearby places share their
+                     weather on one seed (items at different places agree as neighbours do)
 
 Other:
   --help, --version
@@ -251,7 +253,8 @@ arguments parse_arguments(int argc, char** argv)
             name.resize(eq);
         }
         if (name == "uniform" || name == "safe" || name == "relations" || name == "stepparents" || name == "home" ||
-            name == "device" || name == "city" || name == "hourly" || name == "historical")
+            name == "device" || name == "city" || name == "hourly" || name == "historical" ||
+            name == "no-spatial")
         {
             args.flags.insert(name);
             continue;
@@ -297,7 +300,8 @@ const std::map<std::string, std::set<std::string>> accepted{
     {"user", {"country", "sex", "age", "reference-date", "safe", "unique", "device"}},
     {"family", {"country", "sex", "age", "reference-date", "uniform", "up", "down", "stepparents", "home"}},
     {"device", {"country", "reference-date", "platform", "browser", "ip", "locale", "safe", "unique", "uniform"}},
-    {"weather", {"lat", "lon", "city", "country", "start", "days", "units", "elevation", "warming", "hourly", "historical"}}};
+    {"weather", {"lat", "lon", "city", "country", "start", "days", "units", "elevation", "warming", "hourly", "historical",
+                 "no-spatial"}}};
 
 void check_request_options(const arguments& args)
 {
@@ -709,6 +713,7 @@ int run(const arguments& args)
         if (get(args, "units") == std::optional<std::string>{"imperial"}) request.units = dasmig::unit_system::imperial;
         request.hourly = args.flags.contains("hourly");
         request.historical = args.flags.contains("historical");
+        request.spatial = !args.flags.contains("no-spatial");
         int days = 1;
         if (const auto d = get(args, "days"))
         {
