@@ -399,6 +399,124 @@ class json_array_writer
     bool _empty{true};
 };
 
+// An object member that is sometimes null, and the columns it has when it is
+// not ("job" and "job.key", "job.label", ...).
+struct nullable_object
+{
+    std::string column;
+    std::vector<std::string> columns;
+};
+
+// The output format, and for CSV the objects a kind writes as null at times.
+struct output_format
+{
+    std::string name;
+    std::vector<nullable_object> nullable;
+};
+
+// CSV as core::csv_writer writes it (dotted columns from the first record,
+// later records matched by name, the same quoting), except that a null member
+// listed in `nullable` is written as its columns, empty. Without this, a first
+// record with no job or income (a student) would give one "job" column and drop
+// every later record's job and income.
+class csv_table_writer
+{
+  public:
+    csv_table_writer(std::ostream& out, const std::vector<nullable_object>& nullable)
+        : _out{&out}, _nullable{&nullable} {}
+
+    void write_json(std::string_view json)
+    {
+        auto cells = core::flatten_json(json);
+        if (!_nullable->empty()) cells = expand(std::move(cells));
+        if (!_header_written)
+        {
+            for (const auto& cell : cells) _columns.push_back(cell.first);
+            for (std::size_t i = 0; i < _columns.size(); ++i) _position.emplace(_columns[i], i);
+            write_row(_columns);
+            _header_written = true;
+        }
+        std::vector<std::string> row(_columns.size());
+        const bool in_order = std::ranges::equal(cells, _columns, {}, &cell_list::value_type::first);
+        for (std::size_t i = 0; i < cells.size(); ++i)
+        {
+            if (in_order) row[i] = std::move(cells[i].second);
+            else if (const auto it = _position.find(cells[i].first); it != _position.end())
+                row[it->second] = std::move(cells[i].second);
+        }
+        write_row(row);
+    }
+
+  private:
+    using cell_list = std::vector<std::pair<std::string, std::string>>;
+
+    cell_list expand(cell_list cells) const
+    {
+        cell_list out;
+        out.reserve(cells.size());
+        for (auto& cell : cells)
+        {
+            const auto it = std::ranges::find(*_nullable, cell.first, &nullable_object::column);
+            if (it != _nullable->end() && cell.second.empty())
+                for (const auto& column : it->columns) out.emplace_back(column, std::string{});
+            else
+                out.push_back(std::move(cell));
+        }
+        return out;
+    }
+
+    void write_row(const std::vector<std::string>& fields)
+    {
+        for (std::size_t i = 0; i < fields.size(); ++i)
+        {
+            if (i > 0) _out->put(',');
+            const auto& field = fields[i];
+            if (field.find_first_of(",\"\r\n") == std::string::npos)
+            {
+                *_out << field;
+                continue;
+            }
+            _out->put('"');
+            for (const char c : field)
+            {
+                if (c == '"') _out->put('"');
+                _out->put(c);
+            }
+            _out->put('"');
+        }
+        _out->put('\n');
+    }
+
+    std::ostream* _out;
+    const std::vector<nullable_object>* _nullable;
+    std::vector<std::string> _columns;
+    std::map<std::string, std::size_t, std::less<>> _position;
+    bool _header_written{false};
+};
+
+// The members of an occupation that are null at times (job, income), with the
+// columns they have when they are not, under `prefix` ("occupation." in a
+// persona). The columns are read from a real result, an employed adult in the
+// United States, so they follow occupation-generator's JSON.
+std::vector<nullable_object> occupation_nullable(const std::string& prefix)
+{
+    dasmig::occupation_request request;
+    request.country = "US";
+    request.age = 35;
+    request.status = dasmig::employment_status::employed;
+    const auto cells = core::flatten_json(dasmig::ocg::instance().get_occupation(request, 0).to_json());
+    std::vector<nullable_object> out;
+    for (const std::string member : {"job", "income"})
+    {
+        nullable_object object{.column = prefix + member, .columns = {}};
+        for (const auto& cell : cells)
+            if (cell.first.starts_with(member + ".")) object.columns.push_back(prefix + cell.first);
+        if (object.columns.empty()) throw std::logic_error("the prototype occupation has no " + member);
+        out.push_back(std::move(object));
+    }
+    return out;
+}
+
 // An item's JSON with the key a unique batch compares.
 struct keyed_json
 {
@@ -410,18 +528,18 @@ struct keyed_json
 // text, so serializing runs on the worker threads and the calling thread only
 // writes. Items stream to the writer for the format in index order.
 template <typename Make>
-void emit(const std::string& format, std::ostream& out, const core::batch_options& options,
+void emit(const output_format& format, std::ostream& out, const core::batch_options& options,
           std::uint64_t seed, const Make& make)
 {
-    if (format == "jsonl")
+    if (format.name == "jsonl")
     {
         core::jsonl_writer writer{out};
         core::for_each_batch(options, seed, make,
                              [&writer](std::uint64_t, const std::string& json) { writer.write_line(json); });
     }
-    else if (format == "csv")
+    else if (format.name == "csv")
     {
-        core::csv_writer writer{out};
+        csv_table_writer writer{out, format.nullable};
         core::for_each_batch(options, seed, make,
                              [&writer](std::uint64_t, const std::string& json) { writer.write_json(json); });
     }
@@ -436,18 +554,18 @@ void emit(const std::string& format, std::ostream& out, const core::batch_option
 
 // The same as emit(), for items that are unique by a key (core::unique_rule).
 template <typename Make>
-void emit_keyed(const std::string& format, std::ostream& out, const core::batch_options& options,
+void emit_keyed(const output_format& format, std::ostream& out, const core::batch_options& options,
                 std::uint64_t seed, const Make& make)
 {
-    if (format == "jsonl")
+    if (format.name == "jsonl")
     {
         core::jsonl_writer writer{out};
         core::for_each_batch(options, seed, make,
                              [&writer](std::uint64_t, const keyed_json& item) { writer.write_line(item.json); });
     }
-    else if (format == "csv")
+    else if (format.name == "csv")
     {
-        core::csv_writer writer{out};
+        csv_table_writer writer{out, format.nullable};
         core::for_each_batch(options, seed, make,
                              [&writer](std::uint64_t, const keyed_json& item) { writer.write_json(item.json); });
     }
@@ -463,19 +581,19 @@ void emit_keyed(const std::string& format, std::ostream& out, const core::batch_
 // The same as emit(), for items of several rows (a weather series): `make`
 // returns the rows' JSON, written in order.
 template <typename Make>
-void emit_rows(const std::string& format, std::ostream& out, const core::batch_options& options,
+void emit_rows(const output_format& format, std::ostream& out, const core::batch_options& options,
                std::uint64_t seed, const Make& make)
 {
     using rows = std::vector<std::string>;
-    if (format == "jsonl")
+    if (format.name == "jsonl")
     {
         core::jsonl_writer writer{out};
         core::for_each_batch(options, seed, make, [&writer](std::uint64_t, const rows& items)
                              { for (const auto& json : items) writer.write_line(json); });
     }
-    else if (format == "csv")
+    else if (format.name == "csv")
     {
-        core::csv_writer writer{out};
+        csv_table_writer writer{out, format.nullable};
         core::for_each_batch(options, seed, make, [&writer](std::uint64_t, const rows& items)
                              { for (const auto& json : items) writer.write_json(json); });
     }
@@ -489,16 +607,16 @@ void emit_rows(const std::string& format, std::ostream& out, const core::batch_o
 }
 
 // Rows that are not a batch (a lookup such as holidays), in the same formats.
-void emit_list(const std::string& format, std::ostream& out, const std::vector<std::string>& rows)
+void emit_list(const output_format& format, std::ostream& out, const std::vector<std::string>& rows)
 {
-    if (format == "jsonl")
+    if (format.name == "jsonl")
     {
         core::jsonl_writer writer{out};
         for (const auto& json : rows) writer.write_line(json);
     }
-    else if (format == "csv")
+    else if (format.name == "csv")
     {
-        core::csv_writer writer{out};
+        csv_table_writer writer{out, format.nullable};
         for (const auto& json : rows) writer.write_json(json);
     }
     else
@@ -593,6 +711,9 @@ int run(const arguments& args)
         if (!file) throw std::runtime_error("cannot write " + args.out);
     }
     std::ostream& out = args.out.empty() ? std::cout : file;
+    output_format format{.name = args.format, .nullable = {}};
+    if (args.format == "csv" && (args.kind == "occupation" || args.kind == "persona"))
+        format.nullable = occupation_nullable(args.kind == "persona" ? "occupation." : "");
     const bool uniform = args.flags.contains("uniform");
     const auto country = get(args, "country");
     const auto sex_text = get(args, "sex");
@@ -618,7 +739,7 @@ int run(const arguments& args)
             request.relations = family;
         }
         const auto& gen = dasmig::psg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_persona(request, s).to_json(); });
     }
     else if (args.kind == "name" || args.kind == "surname")
@@ -629,10 +750,10 @@ int run(const arguments& args)
             request.gender = dasmig::ng::to_gender(core::from_utf8(*g));
         const auto& gen = dasmig::ng::instance();
         if (args.kind == "name")
-            emit(args.format, out, options, seed,
+            emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_name(request, s).to_json(); });
         else
-            emit(args.format, out, options, seed,
+            emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_surname(request, s).to_json(); });
     }
     else if (args.kind == "nickname")
@@ -640,7 +761,7 @@ int run(const arguments& args)
         dasmig::nickname_request request;
         if (const auto n = get(args, "name")) request.name = core::from_utf8(*n);
         const auto& gen = dasmig::nng::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_nickname(request, s).to_json(); });
     }
     else if (args.kind == "city")
@@ -649,7 +770,7 @@ int run(const arguments& args)
         if (country) request.country = upper(*country);
         request.weighted = !uniform;
         const auto& gen = dasmig::cg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_city(request, s).to_json(); });
     }
     else if (args.kind == "country")
@@ -658,7 +779,7 @@ int run(const arguments& args)
         if (const auto r = get(args, "region")) request.region = *r;
         request.weighted = !uniform;
         const auto& gen = dasmig::cntg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_country(request, s).to_json(); });
     }
     else if (args.kind == "birth")
@@ -670,7 +791,7 @@ int run(const arguments& args)
         if (date_text) request.reference_date = parse_date(*date_text);
         request.weighted = !uniform;
         const auto& gen = dasmig::bthg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_birth(request, s).to_json(); });
     }
     else if (args.kind == "biodata")
@@ -681,7 +802,7 @@ int run(const arguments& args)
         if (sex_text) request.bio_sex = parse_sex(*sex_text);
         if (age_text) request.age = parse_single_age(*age_text);
         const auto& gen = dasmig::bdg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_biodata(request, s).to_json(); });
     }
     else if (args.kind == "trait")
@@ -689,7 +810,7 @@ int run(const arguments& args)
         dasmig::trait_request request;
         if (traits_text) request.count = static_cast<std::size_t>(parse_count(*traits_text, "--traits"));
         const auto& gen = dasmig::trtg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_personality(request, s).to_json(); });
     }
     else if (args.kind == "interest")
@@ -700,7 +821,7 @@ int run(const arguments& args)
         if (sex_text) request.person_sex = parse_sex(*sex_text);
         if (age_text) request.age = static_cast<std::uint8_t>(parse_single_age(*age_text));
         const auto& gen = dasmig::intg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_interest(request, s).to_json(); });
     }
     else if (args.kind == "user")
@@ -714,7 +835,7 @@ int run(const arguments& args)
         request.device = args.flags.contains("device");
         const bool by_username = get(args, "unique") == std::optional<std::string>{"username"};
         const auto& gen = dasmig::usg::instance();
-        emit_keyed(args.format, out, options, seed,
+        emit_keyed(format, out, options, seed,
                    [&](std::uint64_t s)
                    {
                        const auto user = gen.get_user(request, s);
@@ -734,7 +855,7 @@ int run(const arguments& args)
         request.safe = args.flags.contains("safe");
         request.weighted = !uniform;
         const auto& gen = dasmig::dvg::instance();
-        emit_keyed(args.format, out, options, seed,
+        emit_keyed(format, out, options, seed,
                    [&](std::uint64_t s)
                    {
                        const auto device = gen.get_device(request, s);
@@ -754,7 +875,7 @@ int run(const arguments& args)
         request.stepparents = args.flags.contains("stepparents");
         request.home = args.flags.contains("home");
         const auto& gen = dasmig::relg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_family(request, s).to_json(); });
     }
     else if (args.kind == "weather")
@@ -781,7 +902,7 @@ int run(const arguments& args)
         if (country) city_request.country = upper(*country);
         const auto& gen = dasmig::wtg::instance();
         const auto& cities = dasmig::cg::instance();
-        emit_rows(args.format, out, options, seed,
+        emit_rows(format, out, options, seed,
                   [&](std::uint64_t s)
                   {
                       auto r = request;
@@ -828,7 +949,7 @@ int run(const arguments& args)
         if (const auto l = get(args, "language")) request.language = *l;
         request.weighted = !uniform;
         const auto& gen = dasmig::cntg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_locale(request, s).to_json(); });
     }
     else if (args.kind == "timezone")
@@ -838,7 +959,7 @@ int run(const arguments& args)
         if (date_text) request.reference_date = parse_date(*date_text);
         request.weighted = !uniform;
         const auto& gen = dasmig::cntg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_time_zone(request, s).to_json(); });
     }
     else if (args.kind == "holidays")
@@ -852,7 +973,7 @@ int run(const arguments& args)
         request.observances = args.flags.contains("observances");
         std::vector<std::string> rows;
         for (const auto& day : dasmig::cntg::instance().holidays(request)) rows.push_back(day.to_json());
-        emit_list(args.format, out, rows);
+        emit_list(format, out, rows);
     }
     else // occupation
     {
@@ -862,7 +983,7 @@ int run(const arguments& args)
         if (sex_text) request.person_sex = parse_sex(*sex_text);
         if (age_text) request.age = static_cast<std::uint8_t>(parse_single_age(*age_text));
         const auto& gen = dasmig::ocg::instance();
-        emit(args.format, out, options, seed,
+        emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_occupation(request, s).to_json(); });
     }
 
