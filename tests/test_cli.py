@@ -6,6 +6,7 @@ the same on every platform: that is the point of the libraries' own random
 engine, and the CI checks it on Linux (x86-64 and ARM64), macOS and Windows.
 """
 
+import collections
 import csv
 import hashlib
 import io
@@ -17,7 +18,7 @@ from pathlib import Path
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else "build/dasmig-gen"
 KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "biodata", "trait", "interest",
-         "occupation", "user", "family", "device", "weather"]
+         "occupation", "user", "family", "device", "weather", "locale", "timezone"]
 
 KNOWN = {
     ("persona", "1f"): "4f5aaf6a50517742898a15a1a71da8a827fe86066d7a77b5a3488e555b35db8a",
@@ -28,10 +29,15 @@ KNOWN = {
     ("user", "5"): "ced64388c6f120352a8c599858a978ecc852a1b92bdd676e3cb087e588b523b9",
     ("device", "9"): "503a080797d53c0db050c6497424f68cee1fa3b6019cf1d9278f671ec175678f",
     ("weather", "b"): "b02b26c0d3fb045f51d23a880c39d192479e4e5576451b639a3e28fbbc255f35",
+    ("locale", "d"): "2e92d7800b67828229a95af5d214a307aeaa11a3c8eebc924d992adbafa6b9bb",
+    ("timezone", "e"): "5d2f107f9f577ef099e00cff37909306a9db57a2701bb2ca085f3e1134673ac1",
 }
 # weather --lat 35.68 --lon 139.69 --start 2024-03-01 --days 60 --hourly --units imperial --seed c, 20 items.
 KNOWN_WEATHER_SERIES = "454fd34ed013d11f3242605a3faca61b925ee9536afec9a5d379c32427aeed3d"
 # user --device --seed 5: the user known output above, with each user's device.
+# holidays --country BR --year 2025 --optional --observances, and US 2022 (an observed day in 2021).
+KNOWN_HOLIDAYS_BR = "b0761472942c1ea2bf588ed8949cfd1ba92295703ef8ee14c8085399185d3a98"
+KNOWN_HOLIDAYS_US = "3aba1f5814e3b5e8b02eeafe7c1f925fd37a192c7b156506c610adfa0d09f854"
 KNOWN_USER_DEVICE = "021aa999ba6263a54d5399b94ef496b3c0e3ed1fd3e1c833519c078550030015"
 
 failures = []
@@ -74,7 +80,16 @@ for args in [[], ["nosuchkind"], ["persona", "--bogus"], ["persona", "--seed", "
              ["weather", "--city", "--lat", "1", "--lon", "1"], ["weather", "--country", "FR"],
              ["weather", "--units", "kelvin"], ["weather", "--days", "0"], ["weather", "--days", "36601"],
              ["weather", "--start", "2023-13-01"], ["weather", "--sex", "male"], ["city", "--hourly"],
-             ["persona", "--lat", "1"]]:
+             ["persona", "--lat", "1"],
+             ["holidays"], ["holidays", "--country", "BR"], ["holidays", "--year", "2025"],
+             ["holidays", "--country", "BR", "--year", "2025", "--seed", "1"],
+             ["holidays", "--country", "BR", "--year", "2025", "--count", "2"],
+             ["holidays", "--country", "BR", "--year", "2025", "--threads", "2"],
+             ["holidays", "--country", "BR", "--year", "2025", "--first", "1"],
+             ["holidays", "--country", "BR", "--year", "2025", "--uniform"],
+             ["holidays", "--country", "BR", "--year", "x"], ["locale", "--year", "2025"],
+             ["locale", "--optional"], ["timezone", "--language", "fr"], ["timezone", "--observances"],
+             ["persona", "--language", "fr"]]:
     result = run(*args, expect=2)
     check(b"dasmig-gen:" in result.stderr, f"usage error message for {args}")
 run("persona", "--country", "XX", "--count", "1", "--seed", "1", expect=1)
@@ -85,6 +100,11 @@ run("device", "--reference-date", "2020-12-31", "--count", "1", "--seed", "1", e
 run("device", "--locale", "not a tag", "--count", "1", "--seed", "1", expect=1)
 run("weather", "--lat", "40", "--lon", "-40", "--seed", "1", expect=1)  # mid-Atlantic
 run("weather", "--lat", "48.85", "--lon", "2.35", "--warming", "11", "--seed", "1", expect=1)
+run("holidays", "--country", "BR", "--year", "1960", expect=1)  # before the span
+run("holidays", "--country", "XX", "--year", "2025", expect=1)
+run("locale", "--language", "xx", "--seed", "1", expect=1)
+run("locale", "--country", "XX", "--seed", "1", expect=1)
+run("timezone", "--reference-date", "1990-01-01", "--seed", "1", expect=1)  # lite's rules start in 2000
 check(run("persona", "--tier", "full", "--data-dir", tempfile.gettempdir(), "--count", "1", "--seed", "1",
           expect=1).returncode == 1, "a missing full tier is an error")
 
@@ -106,7 +126,7 @@ for kind in KINDS:
     check(run(kind, "--count", "2", "--seed", seed).stdout == unseeded.stdout, f"{kind}: replay from the printed seed")
 
 # --- the output does not depend on threads; ranges and splits agree ---
-for kind in ("persona", "name", "city", "family", "device", "weather"):
+for kind in ("persona", "name", "city", "family", "device", "weather", "locale", "timezone"):
     base = run(kind, "--count", "300", "--seed", "1f", "--threads", "1").stdout
     for threads in ("2", "7", "0"):
         check(run(kind, "--count", "300", "--seed", "1f", "--threads", threads).stdout == base,
@@ -278,6 +298,44 @@ if history is not None:
 else:
     print("note: no weather-generator checkout with history.tsv next to the CLI; --historical not tested")
 
+# --- locale, timezone and holidays ---
+for row in lines(run("locale", "--count", "50", "--seed", "2", "--country", "ca").stdout):
+    loc = json.loads(row)
+    check(loc["country"] == "CA" and loc["tag"].endswith("-CA"), "locale --country")
+french = [json.loads(r) for r in lines(run("locale", "--count", "50", "--seed", "2", "--language", "FR").stdout)]
+check(all(loc["language"] == "fr" for loc in french) and len({loc["country"] for loc in french}) > 3,
+      "locale --language: French tags in several countries")
+# India's 14 tags: by speakers, hi-IN is about a third of the draws; uniformly, no tag is near that.
+top = lambda *extra: max(collections.Counter(json.loads(r)["tag"] for r in lines(
+    run("locale", "--count", "200", "--seed", "2", "--country", "IN", *extra).stdout)).values())
+check(top("--uniform") * 2 < top(), "locale --uniform spreads the draws over the tags")
+# A locale, a zone and a country drawn with one seed are in the same country.
+same = zip(lines(run("locale", "--count", "40", "--seed", "8").stdout),
+           lines(run("timezone", "--count", "40", "--seed", "8").stdout),
+           lines(run("country", "--count", "40", "--seed", "8").stdout))
+check(all(json.loads(a)["country"] == json.loads(b)["country"] == json.loads(c)["cca2"] for a, b, c in same),
+      "locale, timezone and country agree on the country")
+summer = json.loads(run("timezone", "--country", "DE", "--seed", "1").stdout)
+winter = json.loads(run("timezone", "--country", "DE", "--seed", "1", "--reference-date", "2024-01-15").stdout)
+check(summer["name"] == winter["name"] == "Europe/Berlin" and summer["abbreviation"] == "CEST"
+      and winter["abbreviation"] == "CET" and winter["utc_offset"] == "+01:00", "timezone --reference-date")
+br = [json.loads(r) for r in lines(run("holidays", "--country", "br", "--year", "2025").stdout)]
+check(len(br) >= 9 and br[0]["date"] == "2025-01-01" and br[-1]["key"] == "christmas_day"
+      and all(h["kind"] == "public" for h in br) and [h["date"] for h in br] == sorted(h["date"] for h in br),
+      "holidays: Brazil 2025, public days by date")
+more = [json.loads(r) for r in lines(run("holidays", "--country", "BR", "--year", "2025", "--optional").stdout)]
+check(any(h["key"] == "carnival" and h["kind"] == "optional" for h in more) and len(more) > len(br),
+      "holidays --optional adds Carnival")
+check(not any(h["kind"] == "observance" for h in more), "no observances unless asked")
+us = [json.loads(r) for r in lines(run("holidays", "--country", "US", "--year", "2022").stdout)]
+check(us[0]["key"] == "new_year_s_day" and us[0]["observed"] == "2021-12-31", "holidays: an observed day")
+check(run("holidays", "--country", "BR", "--year", "2025").stderr == b"", "holidays prints no seed")
+table = list(csv.reader(io.StringIO(run("holidays", "--country", "BR", "--year", "2025", "--format", "csv")
+                                   .stdout.decode("utf-8"), newline="")))
+check(table[0][:3] == ["date", "observed", "key"] and len(table) == len(br) + 1, "holidays csv")
+check(json.loads(run("holidays", "--country", "BR", "--year", "2025", "--format", "json").stdout) == br,
+      "holidays json equals jsonl")
+
 # --- known outputs, the same on every platform ---
 for (kind, seed), digest in KNOWN.items():
     data = run(kind, "--count", "1000", "--seed", seed, "--threads", "4").stdout
@@ -288,10 +346,14 @@ check(got == KNOWN_USER_DEVICE, f"user --device --seed 5: sha256 {got} != {KNOWN
 got = hashlib.sha256(run("weather", "--lat", "35.68", "--lon", "139.69", "--start", "2024-03-01", "--days", "60",
                          "--hourly", "--units", "imperial", "--count", "20", "--seed", "c", "--threads", "4").stdout).hexdigest()
 check(got == KNOWN_WEATHER_SERIES, f"weather series --seed c: sha256 {got} != {KNOWN_WEATHER_SERIES}")
+got = hashlib.sha256(run("holidays", "--country", "BR", "--year", "2025", "--optional", "--observances").stdout).hexdigest()
+check(got == KNOWN_HOLIDAYS_BR, f"holidays BR 2025: sha256 {got} != {KNOWN_HOLIDAYS_BR}")
+got = hashlib.sha256(run("holidays", "--country", "US", "--year", "2022").stdout).hexdigest()
+check(got == KNOWN_HOLIDAYS_US, f"holidays US 2022: sha256 {got} != {KNOWN_HOLIDAYS_US}")
 
 if failures:
     print("FAIL")
     for failure in failures:
         print(" -", failure)
     sys.exit(1)
-print("PASS: dasmig-gen usage errors, 15 kinds, thread invariance, ranges, formats, requests and known outputs.")
+print("PASS: dasmig-gen usage errors, 17 kinds and holidays, thread invariance, ranges, formats, requests and known outputs.")

@@ -44,7 +44,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.6.1"
+#define DASMIG_GEN_VERSION "3.7.0"
 #endif
 
 namespace
@@ -73,8 +73,12 @@ Kinds:
   device      a device: model, OS, browser, user agent, screen and IP address
   family      the people around a person (parents, siblings, partners, children)
   weather     days of weather at a place (CRU TS normals, 1991-2020)
+  locale      a locale tag with its CLDR formats (en-CA, fr-CA), drawn by speakers
+  timezone    an IANA time zone with its offset, drawn by population
+  holidays    a country's public holidays in a year (a lookup: one row per holiday,
+              no batch options)
 
-Batch options (all kinds):
+Batch options (every kind but holidays):
   --count N          number of items (default 1)
   --seed HEX         batch seed, 1 to 16 hexadecimal digits (default random, printed to stderr)
   --first N          index of the first item (default 0); item i is the single call with
@@ -88,13 +92,15 @@ Batch options (all kinds):
                      (<DIR>/name-generator/resources, ...)
 
 Request options (the ones a kind understands; the rest is drawn):
-  --country CC       ISO 3166-1 alpha-2 code        (persona, name, surname, city, birth,
-                                                     biodata, interest, occupation, user, family, device)
+  --country CC       ISO 3166-1 alpha-2 code        (persona, name, surname, city, birth, biodata,
+                                                     interest, occupation, user, family, device, locale,
+                                                     timezone; holidays requires it)
   --sex male|female                                 (persona, birth, biodata, interest, occupation, user, family)
   --age N or MIN-MAX                                (persona, birth, biodata, interest, occupation, user;
                                                      biodata, interest, occupation and family take one age)
   --reference-date YYYY-MM-DD   the date ages are computed at (persona, birth, user, family);
-                     for device, the date its models and versions are those of (2021-01-01 or later)
+                     for device, the date its models and versions are those of (2021-01-01 or later);
+                     for timezone, the date of the offset reported (2000 or later; 1970 with --tier full)
   --traits N         number of personality traits   (persona, trait)
   --gender m|f|any   (name, surname)
   --name TEXT        full name to derive from       (nickname)
@@ -103,7 +109,10 @@ Request options (the ones a kind understands; the rest is drawn):
   --relations        also draw the persona's family (parents, siblings, partners, children) as "relatives" (persona)
   --stepparents      also a parent's new partner, as stepfather or stepmother, and their children (family; persona with --relations)
   --home             also who the person lives with, as "household" (family; persona with --relations)
-  --uniform          uniform instead of population-weighted choice (city, country, birth, family, device)
+  --uniform          uniform instead of population-weighted choice (city, country, birth, family, device,
+                     locale, timezone)
+  --language CODE    ISO 639 code: only that language's tags; with no --country, the country is
+                     drawn by its speakers (locale)
   --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user);
                      IP addresses from the documentation ranges (device, user --device)
   --unique KEY       no two items share the key: email or username (user), ip (device)
@@ -129,6 +138,11 @@ Weather options (an item is --days days at one place, one row per day):
                      is read from --data-dir (default the current folder)
   --no-spatial       each climate cell's own weather; by default nearby places share their
                      weather on one seed (items at different places agree as neighbours do)
+
+Holidays options (dasmig-gen holidays --country BR --year 2025):
+  --year YYYY        the year (required); each country has its own span within 1970-2050
+  --optional         also days off for some only (Brazil's Carnival, government-only days)
+  --observances      also days that are not days off (Mother's Day)
 
 Other:
   --help, --version
@@ -224,14 +238,16 @@ struct arguments
     std::string data_dir;
     std::map<std::string, std::string> request; // --country, --sex, ... (without the dashes)
     std::set<std::string> flags;                // --uniform
+    std::set<std::string> batch_given;          // --count, --seed, ... as given (holidays takes none)
 };
 
 const std::set<std::string> value_options{"country", "sex",   "age",    "reference-date", "traits",    "gender",
                                           "name",    "region", "unique", "up",           "down",      "platform",
                                           "browser", "ip",    "locale", "lat",          "lon",       "start",
-                                          "days",    "units", "elevation", "warming"};
-const std::set<std::string> kinds{"persona", "name",     "surname",  "nickname",   "city", "country", "birth",  "biodata",
-                                  "trait",   "interest", "occupation", "user",     "family", "device", "weather"};
+                                          "days",    "units", "elevation", "warming",     "language",  "year"};
+const std::set<std::string> kinds{"persona", "name",     "surname",    "nickname", "city",   "country",
+                                  "birth",   "biodata",  "trait",      "interest", "occupation", "user",
+                                  "family",  "device",   "weather",    "locale",   "timezone",   "holidays"};
 
 arguments parse_arguments(int argc, char** argv)
 {
@@ -254,7 +270,7 @@ arguments parse_arguments(int argc, char** argv)
         }
         if (name == "uniform" || name == "safe" || name == "relations" || name == "stepparents" || name == "home" ||
             name == "device" || name == "city" || name == "hourly" || name == "historical" ||
-            name == "no-spatial")
+            name == "no-spatial" || name == "optional" || name == "observances")
         {
             args.flags.insert(name);
             continue;
@@ -265,6 +281,7 @@ arguments parse_arguments(int argc, char** argv)
             if (i + 1 >= argc) throw usage_error("--" + name + " needs a value");
             return argv[++i];
         };
+        if (name == "count" || name == "first" || name == "threads" || name == "seed") args.batch_given.insert(name);
         if (name == "count") args.count = parse_count(value(), "--count");
         else if (name == "first") args.first = parse_count(value(), "--first");
         else if (name == "threads") args.threads = static_cast<std::size_t>(parse_count(value(), "--threads"));
@@ -301,7 +318,10 @@ const std::map<std::string, std::set<std::string>> accepted{
     {"family", {"country", "sex", "age", "reference-date", "uniform", "up", "down", "stepparents", "home"}},
     {"device", {"country", "reference-date", "platform", "browser", "ip", "locale", "safe", "unique", "uniform"}},
     {"weather", {"lat", "lon", "city", "country", "start", "days", "units", "elevation", "warming", "hourly", "historical",
-                 "no-spatial"}}};
+                 "no-spatial"}},
+    {"locale", {"country", "language", "uniform"}},
+    {"timezone", {"country", "reference-date", "uniform"}},
+    {"holidays", {"country", "year", "optional", "observances"}}};
 
 void check_request_options(const arguments& args)
 {
@@ -329,6 +349,14 @@ void check_request_options(const arguments& args)
         if (const auto units = args.request.find("units");
             units != args.request.end() && units->second != "metric" && units->second != "imperial")
             throw usage_error("--units must be metric or imperial");
+    }
+    if (args.kind == "holidays")
+    {
+        // A lookup, not a draw: there is nothing to seed, count or split.
+        for (const auto& name : args.batch_given)
+            throw usage_error("--" + name + " does not apply to holidays (a lookup: one row per holiday)");
+        if (!args.request.contains("country")) throw usage_error("holidays needs --country");
+        if (!args.request.contains("year")) throw usage_error("holidays needs --year");
     }
     if (args.kind == "persona" && !args.flags.contains("relations"))
     {
@@ -460,6 +488,27 @@ void emit_rows(const std::string& format, std::ostream& out, const core::batch_o
     }
 }
 
+// Rows that are not a batch (a lookup such as holidays), in the same formats.
+void emit_list(const std::string& format, std::ostream& out, const std::vector<std::string>& rows)
+{
+    if (format == "jsonl")
+    {
+        core::jsonl_writer writer{out};
+        for (const auto& json : rows) writer.write_line(json);
+    }
+    else if (format == "csv")
+    {
+        core::csv_writer writer{out};
+        for (const auto& json : rows) writer.write_json(json);
+    }
+    else
+    {
+        json_array_writer writer{out};
+        for (const auto& json : rows) writer.add(json);
+        writer.finish();
+    }
+}
+
 void load_full_tier(const arguments& args)
 {
     if (args.tier != "full") return;
@@ -479,7 +528,12 @@ void load_full_tier(const arguments& args)
     const bool weather_city = args.kind == "weather" && args.flags.contains("city");
     if (wants("city") || all || weather_city) check(dasmig::cg::instance().load(dasmig::dataset::full), "city-generator");
     if (args.kind == "weather") check(dasmig::wtg::instance().load(dasmig::dataset::full), "weather-generator");
-    if (wants("country") || all) check(dasmig::cntg::instance().load(dasmig::dataset::full), "country-generator");
+    const bool country_data = args.kind == "locale" || args.kind == "timezone" || args.kind == "holidays";
+    if (wants("country") || all || country_data)
+        check(dasmig::cntg::instance().load(dasmig::dataset::full), "country-generator");
+    if (country_data && !dasmig::cntg::instance().has_locale_data())
+        throw std::runtime_error("the full tier of country-generator has no locale tables; check out "
+                                 "country-generator 3.3.0 or later");
     if (wants("birth") || is_family || all) check(dasmig::bthg::instance().load(dasmig::dataset::full), "birth-generator");
     if (is_family || (all && args.flags.contains("relations"))) check(dasmig::relg::instance().load(dasmig::dataset::full), "relationship-generator");
     if (wants("biodata") || all) check(dasmig::bdg::instance().load(dasmig::dataset::full), "biodata-generator");
@@ -523,8 +577,9 @@ int run(const arguments& args)
     load_full_tier(args);
     if (args.kind == "weather" && args.flags.contains("historical")) load_weather_history(data_base);
 
-    const std::uint64_t seed = args.seed ? *args.seed : core::rng::entropy_seed();
-    if (!args.seed) std::fprintf(stderr, "seed: %s\n", hex16(seed).c_str());
+    const bool lookup = args.kind == "holidays";
+    const std::uint64_t seed = args.seed ? *args.seed : lookup ? 0 : core::rng::entropy_seed();
+    if (!args.seed && !lookup) std::fprintf(stderr, "seed: %s\n", hex16(seed).c_str());
     core::batch_options options{.count = args.count, .first = args.first, .threads = args.threads};
     if (get(args, "unique"))
     {
@@ -765,6 +820,39 @@ int run(const arguments& args)
                       }
                       return rows;
                   });
+    }
+    else if (args.kind == "locale")
+    {
+        dasmig::locale_request request;
+        if (country) request.country = upper(*country);
+        if (const auto l = get(args, "language")) request.language = *l;
+        request.weighted = !uniform;
+        const auto& gen = dasmig::cntg::instance();
+        emit(args.format, out, options, seed,
+             [&](std::uint64_t s) { return gen.get_locale(request, s).to_json(); });
+    }
+    else if (args.kind == "timezone")
+    {
+        dasmig::time_zone_request request;
+        if (country) request.country = upper(*country);
+        if (date_text) request.reference_date = parse_date(*date_text);
+        request.weighted = !uniform;
+        const auto& gen = dasmig::cntg::instance();
+        emit(args.format, out, options, seed,
+             [&](std::uint64_t s) { return gen.get_time_zone(request, s).to_json(); });
+    }
+    else if (args.kind == "holidays")
+    {
+        dasmig::holiday_request request;
+        request.country = upper(*country);
+        const auto year = parse_count(*get(args, "year"), "--year");
+        if (year < 1 || year > 9999) throw usage_error("--year must be a year such as 2025");
+        request.year = static_cast<int>(year);
+        request.optional = args.flags.contains("optional");
+        request.observances = args.flags.contains("observances");
+        std::vector<std::string> rows;
+        for (const auto& day : dasmig::cntg::instance().holidays(request)) rows.push_back(day.to_json());
+        emit_list(args.format, out, rows);
     }
     else // occupation
     {

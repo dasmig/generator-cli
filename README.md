@@ -10,6 +10,7 @@ dasmig-gen persona --country BR --sex female --age 25-40 --count 1000 --format c
 dasmig-gen name --country DE --gender f --count 20
 dasmig-gen city --country JP --count 50 --uniform --format json
 dasmig-gen weather --lat 48.85 --lon 2.35 --start 2024-01-01 --days 366 --seed 7 --format csv
+dasmig-gen holidays --country BR --year 2025 --format csv
 ```
 
 Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are attached to each [release](https://github.com/dasmig/generator-cli/releases), with `SHA256SUMS`.
@@ -32,6 +33,9 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 | `family` | The people around a person: parents, siblings, partners and children, with ages, deaths and names by country | `--country --sex --age --reference-date --uniform --up --down --stepparents --home` |
 | `device` | A device whose model, OS, browser, user agent, client hints, screen and IP address fit together at a date | `--country --reference-date --platform --browser --ip --locale --safe --unique --uniform` |
 | `weather` | Days of weather at a place: temperatures, precipitation and its form, snow on the ground, thunder, drizzle, fog, cloud, humidity, wind and gusts, sun and solar radiation, and the day in a word | `--lat --lon --city --country --start --days --units --elevation --warming --hourly --historical --no-spatial` |
+| `locale` | A locale tag (`en-CA`, `fr-CA`) drawn by speakers, with its CLDR date, time, number and currency formats, symbols, currency, week and measurement system | `--country --language --uniform` |
+| `timezone` | An IANA time zone drawn by population, with its UTC offset, abbreviation and daylight time at a date | `--country --reference-date --uniform` |
+| `holidays` | A country's public holidays in a year, one row per day off (a lookup, not a batch) | `--country --year --optional --observances` |
 
 What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years, 0-120; `biodata`, `interest`, `occupation` and `family` take one age; `user` ages start at 13). Countries are ISO 3166-1 alpha-2 codes. The generator never reads the clock: pass `--reference-date YYYY-MM-DD` for ages as of a date.
 
@@ -45,11 +49,15 @@ What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years
 
 `device --platform` takes a platform key (`android-phone`, `ios-phone`, `windows-desktop`, `macos-desktop`, `ipad`, `android-tablet`, `linux-desktop`, `chromeos-desktop`, `other`) and `--browser` a browser key (`chrome`, `safari`, `edge`, `firefox`, `samsung`, `opera`, `yandex`); a browser that does not run on the platform is an error. `--reference-date` is the date the models and versions are those of (2021-01-01 or later; 2023-07-01 by default), `--ip v4`, `v6` or `any` (by the country's IPv6 share) the address family, `--locale` a BCP 47 tag for the `Accept-Language` header, and `--safe` takes addresses from the documentation ranges. `--unique ip` makes no two devices share an address.
 
+`locale`, `timezone` and `country` with one seed draw the same country, so a locale and a zone can be paired with a country. `locale --language fr` gives only French tags, and with no `--country` it draws the country by French speakers. `timezone --reference-date` is the date whose offset and abbreviation are reported (2023-07-01 by default; Berlin is `CEST` then and `CET` on 2024-01-15). The built-in rules start in 2000, and `--tier full` goes back to 1970.
+
+`holidays --country BR --year 2025` lists the year's national holidays by date, with the name in the country's language and in English, a stable `key`, the `kind` and, where a weekend moves a day off, the `observed` date (the US's New Year's Day 2022 is observed on 2021-12-31). `--optional` adds days off for some only (Brazil's Carnival), and `--observances` adds days that are not days off. It is a lookup, so `--count`, `--seed`, `--first` and `--threads` are errors. Each country's years are python-holidays' span within 1970-2050, and a year outside it is an error. See [country-generator](https://github.com/dasmig/country-generator).
+
 ## Batches
 
 | Option | |
 | --- | --- |
-| `--count N` | Number of items (default 1). |
+| `--count N` | Number of items (default 1). These options apply to every kind but `holidays`. |
 | `--seed HEX` | The batch seed, 1 to 16 hexadecimal digits. Without it a random seed is drawn and printed to standard error, so the run can be repeated. |
 | `--first N` | Index of the first item (default 0). |
 | `--threads N` | Worker threads (default 1; `0` is the number of cores). |
