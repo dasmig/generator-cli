@@ -68,7 +68,7 @@ Kinds:
   city        a city (GeoNames)                country     country facts
   birth       a birth date and age             biodata     height, weight, eyes, hair, skin, blood type
   trait       a personality                    interest    religion, hobbies and media
-  occupation  employment, education and job
+  occupation  employment, education, job and income
   user        a user record (name, birth, address, phone, email, account)
   device      a device: model, OS, browser, user agent, screen and IP address
   family      the people around a person (parents, siblings, partners, children)

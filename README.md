@@ -28,7 +28,7 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 | `biodata` | Height, weight, eyes, hair, skin, blood type | `--country --sex --age` |
 | `trait` | A personality | `--traits` |
 | `interest` | Religion, hobbies and media | `--country --sex --age` |
-| `occupation` | Employment, education and job | `--country --sex --age` |
+| `occupation` | Employment, education, job and income | `--country --sex --age` |
 | `user` | A user record: name, birth, address, phone, email and an account (username, password, dates, device, locale) | `--country --sex --age --reference-date --safe --unique --device` |
 | `family` | The people around a person: parents, siblings, partners and children, with ages, deaths and names by country | `--country --sex --age --reference-date --uniform --up --down --stepparents --home` |
 | `device` | A device whose model, OS, browser, user agent, client hints, screen and IP address fit together at a date | `--country --reference-date --platform --browser --ip --locale --safe --unique --uniform` |
