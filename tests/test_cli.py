@@ -21,10 +21,10 @@ KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "
          "occupation", "user", "family", "device", "weather", "locale", "timezone"]
 
 KNOWN = {
-    ("persona", "1f"): "69f41993c3ef599fa62bad2a779de5ed864ab00c267e7351cad7960e2f18ec25",
+    ("persona", "1f"): "405d361d9e9e66e77b8b8a5c2110d0b1350b0f5616221458ae73c46df37d8d14",
     ("name", "2a"): "92523b6a46b7abfb0df42cedcac244cfccb4c5e358e8cd9dd4fb35e28f2987c9",
     ("city", "3"): "18363ff56b0229a14f7544258d3fc26e17c95d398a18683e605da11340f86aef",
-    ("occupation", "4"): "22176ea1382ab398ca54c23cfb77ce004bd4a389c185a94a9d8e131cd73d8981",
+    ("occupation", "4"): "5897aa706cf16fb9d5ce4c9375b4e4ec9303e2136477189ef13923e3ae50c50f",
     ("family", "6"): "086654befa2efa30e64e440909bcb3a04bc914f10ac2bd7806f85200b9e79588",
     ("user", "5"): "ced64388c6f120352a8c599858a978ecc852a1b92bdd676e3cb087e588b523b9",
     ("device", "9"): "503a080797d53c0db050c6497424f68cee1fa3b6019cf1d9278f671ec175678f",
