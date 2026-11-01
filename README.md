@@ -72,7 +72,7 @@ Item *i* is exactly the single call with the seed derived from the batch seed an
 - **An item replays alone** from the batch seed and its index.
 - **The same seed gives the same bytes on every platform**: Linux, macOS and Windows, x86-64 and ARM64.
 
-`csv` flattens each result's JSON into dotted columns (`country.cca2`, `birth.date`); an array is one cell holding its JSON. The columns come from the first record. `json` writes one array with an item per line. `jsonl` and `csv` stream, so a batch of millions never has to fit in memory.
+`csv` flattens each result's JSON into dotted columns (`country.cca2`, `birth.date`); an array is one cell holding its JSON. The columns come from the first record. In `occupation` and `persona`, a job or income that is null still has its columns (`job.label`, `income.amount`, `income.currency`), left empty, so a first record without a job does not drop the later records' ones. `json` writes one array with an item per line. `jsonl` and `csv` stream, so a batch of millions never has to fit in memory.
 
 On a desktop, `persona` runs at about 17,000 per second on one thread and 60,000 per second on all cores.
 

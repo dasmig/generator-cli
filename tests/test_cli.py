@@ -142,6 +142,21 @@ rows = run("persona", "--count", str(count), "--seed", "5", "--format", "csv").s
 table = list(csv.reader(io.StringIO(rows, newline="")))
 check(len(table) == count + 1 and "country.cca2" in table[0] and "signature.seed" in table[0], "csv shape")
 check(all(len(row) == len(table[0]) for row in table), "csv rows have as many cells as the header")
+# A job and an income are null for some records. The columns are there even
+# when the first record has neither (occupation seed 2 starts inactive with no
+# income, persona seed 1 with a student), and later records fill them.
+for kind, seed, prefix in [("occupation", "2", ""), ("persona", "1", "occupation.")]:
+    out = run(kind, "--count", "40", "--seed", seed, "--format", "csv").stdout.decode("utf-8")
+    records = list(csv.DictReader(io.StringIO(out, newline="")))
+    items = [json.loads(r) for r in lines(run(kind, "--count", "40", "--seed", seed).stdout)]
+    occupations = [item["occupation"] if prefix else item for item in items]
+    check(occupations[0]["income"] is None, f"{kind} csv: the first record should have no income")
+    check({prefix + c for c in ("job.key", "job.label", "income.amount", "income.currency")} <= set(records[0]),
+          f"{kind} csv: job and income columns")
+    check(prefix + "income" not in records[0] and prefix + "job" not in records[0], f"{kind} csv: null object column")
+    check([r[prefix + "income.currency"] for r in records] == [o["income"]["currency"] if o["income"] else ""
+          for o in occupations], f"{kind} csv: income cells")
+    check(any(o["income"] for o in occupations), f"{kind} csv: some record should have an income")
 doc = json.loads(run("persona", "--count", str(count), "--seed", "5", "--format", "json").stdout)
 check(isinstance(doc, list) and len(doc) == count, "json array")
 check([p["signature"]["seed"] for p in doc] == [json.loads(r)["signature"]["seed"] for r in
