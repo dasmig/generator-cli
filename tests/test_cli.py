@@ -18,7 +18,7 @@ from pathlib import Path
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else "build/dasmig-gen"
 KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "biodata", "trait", "interest",
-         "occupation", "user", "family", "device", "weather", "locale", "timezone"]
+         "occupation", "user", "family", "device", "weather", "locale", "timezone", "identity", "finance"]
 
 KNOWN = {
     ("persona", "1f"): "fb66afc902755597430c9a56afaf0635a4bc1f912b21c2ff4ca5cb4ca65483d7",
@@ -26,11 +26,13 @@ KNOWN = {
     ("city", "3"): "18363ff56b0229a14f7544258d3fc26e17c95d398a18683e605da11340f86aef",
     ("occupation", "4"): "7f63ac27e08c59e4fe327433adb30b15e6d45ca54f6fb3ba0ab7128dd32b3d00",
     ("family", "6"): "086654befa2efa30e64e440909bcb3a04bc914f10ac2bd7806f85200b9e79588",
-    ("user", "5"): "ced64388c6f120352a8c599858a978ecc852a1b92bdd676e3cb087e588b523b9",
+    ("user", "5"): "84164a0443f4a2fa49b96ab3b9aae2c79d8addc92b0d4fe064fb20c15a8723b9",
     ("device", "9"): "503a080797d53c0db050c6497424f68cee1fa3b6019cf1d9278f671ec175678f",
     ("weather", "b"): "b02b26c0d3fb045f51d23a880c39d192479e4e5576451b639a3e28fbbc255f35",
     ("locale", "d"): "2e92d7800b67828229a95af5d214a307aeaa11a3c8eebc924d992adbafa6b9bb",
     ("timezone", "e"): "5d2f107f9f577ef099e00cff37909306a9db57a2701bb2ca085f3e1134673ac1",
+    ("identity", "a1"): "1ffda2faf568fa128a48e7ad1f5ad6e924c530f8a458c57bd793b7fefaad5809",
+    ("finance", "a2"): "fed7ad8b3e1b18763e72073d5a89f0967aafdcf645652e89bececf2cfe4cf7ca",
 }
 # weather --lat 35.68 --lon 139.69 --start 2024-03-01 --days 60 --hourly --units imperial --seed c, 20 items.
 KNOWN_WEATHER_SERIES = "454fd34ed013d11f3242605a3faca61b925ee9536afec9a5d379c32427aeed3d"
@@ -38,7 +40,7 @@ KNOWN_WEATHER_SERIES = "454fd34ed013d11f3242605a3faca61b925ee9536afec9a5d379c324
 # holidays --country BR --year 2025 --optional --observances, and US 2022 (an observed day in 2021).
 KNOWN_HOLIDAYS_BR = "b0761472942c1ea2bf588ed8949cfd1ba92295703ef8ee14c8085399185d3a98"
 KNOWN_HOLIDAYS_US = "3aba1f5814e3b5e8b02eeafe7c1f925fd37a192c7b156506c610adfa0d09f854"
-KNOWN_USER_DEVICE = "021aa999ba6263a54d5399b94ef496b3c0e3ed1fd3e1c833519c078550030015"
+KNOWN_USER_DEVICE = "5f673d50452fdcaf10e600f5aa35afce3992e2158d3ab805fa58cc6940558626"
 
 failures = []
 
@@ -366,9 +368,122 @@ check(got == KNOWN_HOLIDAYS_BR, f"holidays BR 2025: sha256 {got} != {KNOWN_HOLID
 got = hashlib.sha256(run("holidays", "--country", "US", "--year", "2022").stdout).hexdigest()
 check(got == KNOWN_HOLIDAYS_US, f"holidays US 2022: sha256 {got} != {KNOWN_HOLIDAYS_US}")
 
+# --- a name from the country asked for ---
+for row in lines(run("name", "--country", "br", "--count", "30", "--seed", "1").stdout):
+    check(json.loads(row)["culture"] == "brazilian", "name --country")
+for row in lines(run("surname", "--country", "JP", "--count", "30", "--seed", "1").stdout):
+    check(json.loads(row)["culture"] == "japanese", "surname --country")
+run("name", "--country", "XX", "--seed", "1", expect=1)
+
+# --- identity and finance ---
+def items(*args):
+    return [json.loads(r) for r in lines(run(*args).stdout)]
+
+
+for args in (["identity", "--document", "licence"], ["identity", "--unique", "email"], ["identity", "--age", "30"],
+             ["identity", "--accounts", "current"], ["finance", "--document", "passport"],
+             ["finance", "--accounts", "pension"], ["finance", "--cards", "gift"], ["finance", "--card-source", "real"],
+             ["finance", "--unique", "number"], ["finance", "--age", "30"], ["finance", "--sex", "male"],
+             ["user", "--document", "passport"], ["user", "--cards", "any"], ["persona", "--scheme", "br-cpf"],
+             ["persona", "--network", "visa"], ["persona", "--safe"], ["family", "--identity"], ["device", "--finance"],
+             ["validate"], ["validate", "br-cpf"], ["validate", "br-cpf", "1", "2"], ["validate", "br-cpf", "1", "--seed", "1"],
+             ["validate", "br-cpf", "1", "--count", "2"], ["validate", "br-cpf", "1", "--safe"],
+             ["validate", "iban-de", "1", "--reference-date", "2020-01-01"], ["validate", "card", "1", "--reference-date", "2020-01-01"],
+             ["name", "x"]):
+    run(*args, expect=2)
+run("identity", "--country", "XX", "--seed", "1", expect=1)
+run("identity", "--scheme", "no-such", "--country", "BR", "--seed", "1", expect=1)
+run("finance", "--country", "XX", "--seed", "1", expect=1)
+run("finance", "--safe", "--cards", "any", "--card-source", "network_range", "--seed", "1", expect=1)
+run("identity", "--with-name", "--country", "AQ", "--seed", "1", expect=1)
+run("validate", "no-such", "1", expect=1)
+
+people = items("identity", "--country", "br", "--count", "30", "--seed", "1", "--document", "passport", "--reference-date", "2025-01-01")
+check(all(p["country_code"] == "BR" and all(n["scheme"] == "br-cpf" for n in p["numbers"]) for p in people)
+      and any(p["numbers"] for p in people), "identity --country")
+check(all(p["documents"][0]["mrz"] == [] for p in people if p["documents"]) and "name" not in people[0], "identity without a name has no MRZ")
+named = items("identity", "--with-name", "--country", "BR", "--count", "30", "--seed", "1", "--document", "passport", "--sex", "female", "--age", "30-40")
+check(all(p["name"] and p["sex"] == "female" and p["documents"][0]["mrz"] for p in named if p["documents"]), "identity --with-name")
+check(any(p["name"].isascii() and p["name"].upper().split()[-1] in p["documents"][0]["mrz"][0] for p in named if p["documents"]),
+      "identity --with-name: the name is on the document")
+check(any(p["documents"] for p in named), "identity --with-name: documents")
+drawn = items("identity", "--with-name", "--count", "200", "--seed", "2")
+check(len({p["country_code"] for p in drawn}) > 20 and all(p["name"] for p in drawn), "identity --with-name draws countries with names")
+safe = items("identity", "--safe", "--country", "FR", "--count", "20", "--seed", "3", "--document", "passport")
+check(all(n["reserved"] for p in safe for n in p["numbers"]), "identity --safe")
+batch = items("identity", "--country", "BR", "--count", "3000", "--seed", "4", "--unique", "number", "--threads", "3")
+values = [n["value"] for p in batch for n in p["numbers"][:1]]
+check(len(batch) == 3000 and len(values) > 2000 and len(set(values)) == len(values), "identity --unique number")
+# Countries that often have no number still fill a unique batch.
+check(len(items("identity", "--count", "500", "--seed", "4", "--unique", "number")) == 500, "identity --unique: no number is no duplicate")
+for a in (["identity"], ["finance", "--cards", "any"], ["identity", "--with-name"], ["finance", "--with-name"]):
+    one = run(*a, "--count", "50", "--seed", "6", "--threads", "1").stdout
+    check(one == run(*a, "--count", "50", "--seed", "6", "--threads", "4").stdout, f"{a}: threads")
+    check(lines(one)[7:9] == lines(run(*a, "--count", "2", "--first", "7", "--seed", "6").stdout), f"{a}: --first")
+
+money = items("finance", "--country", "DE", "--count", "20", "--seed", "1", "--accounts", "current,savings",
+              "--cards", "debit,any", "--card-source", "test_number")
+check(all(len(m["accounts"]) == 2 and m["accounts"][0]["iban"].startswith("DE") and len(m["cards"]) == 2
+          and all(c["source"] == "test_number" and c["reserved"] for c in m["cards"]) for m in money), "finance request")
+check(all(c["holder"] == "" for m in money for c in m["cards"]), "finance without a name has no holder")
+held = items("finance", "--with-name", "--country", "FR", "--count", "20", "--seed", "1", "--cards", "any", "--card-source", "test_number")
+check(all(m["name"] and m["cards"] and m["cards"][0]["holder"] for m in held), "finance --with-name")
+check(items("finance", "--country", "DE", "--accounts", "none", "--seed", "1")[0]["accounts"] == [], "finance --accounts none")
+check(all(c["network"] == "visa" for m in items("finance", "--country", "US", "--count", "10", "--seed", "1", "--cards", "debit", "--network", "visa") for c in m["cards"]), "finance --network")
+range_cards = items("finance", "--country", "US", "--count", "10", "--seed", "1", "--cards", "debit")
+check(all(c["source"] == "network_range" and c["security_code"] == "" for m in range_cards for c in m["cards"]), "finance: range cards by default, no security code")
+safe = items("finance", "--country", "FR", "--count", "10", "--seed", "1", "--safe", "--cards", "any")
+check(all(a["reserved"] for m in safe for a in m["accounts"]) and all(c["reserved"] for m in safe for c in m["cards"]), "finance --safe")
+batch = items("finance", "--country", "DE", "--count", "2000", "--seed", "4", "--unique", "account")
+check(len({m["accounts"][0]["iban"] for m in batch}) == 2000, "finance --unique account")
+batch = items("finance", "--country", "US", "--count", "2000", "--seed", "4", "--unique", "card", "--cards", "debit")
+check(len({m["cards"][0]["number"] for m in batch}) == 2000, "finance --unique card")
+table = list(csv.reader(io.StringIO(run("identity", "--country", "BR", "--count", "3", "--seed", "1", "--with-name", "--format", "csv").stdout.decode("utf-8"))))
+check(table[0][:2] == ["name", "country_code"] and len(table) == 4, "identity csv")
+
+# --- user and persona with the parts: nothing else changes ---
+def bare(item):
+    return {k: v for k, v in item.items() if k not in ("identity", "finance", "signature")}
+
+
+for kind in ("user", "persona"):
+    plain = items(kind, "--count", "30", "--seed", "8")
+    full = items(kind, "--count", "30", "--seed", "8", "--identity", "--document", "passport", "--finance", "--cards", "any", "--card-source", "test_number")
+    check(all("identity" not in p and "finance" not in p for p in plain), f"{kind}: no parts by default")
+    check([bare(p) for p in plain] == [bare(p) for p in full], f"{kind}: the parts change nothing else")
+    check(all(isinstance(p["identity"]["numbers"], list) and isinstance(p["finance"]["accounts"], list) for p in full), f"{kind}: the parts")
+    check(all(p["finance"]["cards"][0]["holder"] for p in full if p["finance"]["cards"]), f"{kind}: card holders")
+user = items("user", "--country", "BR", "--seed", "2a", "--identity", "--safe")[0]
+check(user["identity"]["numbers"][0]["reserved"], "user --safe reaches the papers")
+user = items("persona", "--country", "BR", "--seed", "2a", "--identity", "--safe")[0]
+check(user["identity"]["numbers"][0]["reserved"], "persona --safe reaches the papers")
+table = list(csv.reader(io.StringIO(run("user", "--count", "2", "--seed", "1", "--identity", "--finance", "--format", "csv").stdout.decode("utf-8"))))
+check("identity.numbers" in table[0] and "finance.accounts" in table[0], "user csv with the parts")
+
+# --- validate ---
+def validate(*args, expect=0):
+    done = run("validate", *args, expect=expect)
+    check(done.stderr == b"", "validate prints no seed")
+    return json.loads(done.stdout)
+
+
+check(validate("br-cpf", "111.444.777-35") == {"scheme": "br-cpf", "text": "111.444.777-35", "valid": True}, "validate: a CPF")
+check(not validate("br-cpf", "111.444.777-36", expect=3)["valid"], "validate: a wrong CPF")
+check(validate("iban-de", "DE89 3704 0044 0532 0130 00")["valid"], "validate: an IBAN")
+check(not validate("iban-de", "DE89 3704 0044 0532 0130 01", expect=3)["valid"], "validate: a wrong IBAN")
+check("visa" in validate("card", "4242424242424242")["networks"], "validate: a card and its networks")
+check(validate("card", "4242424242424241", expect=3)["networks"] == [], "validate: a wrong card")
+for source in items("identity", "--country", "IT", "--count", "20", "--seed", "1", "--with-name"):
+    for number in source["numbers"]:
+        validate(number["scheme"], number["value"])
+for source in items("finance", "--country", "BR", "--count", "20", "--seed", "1"):
+    for account in source["accounts"]:
+        validate(account["scheme"], account["iban"])
+check(lines(run("validate", "card", "4242424242424242", "--format", "csv").stdout)[0].startswith("scheme,text,valid"), "validate csv")
+
 if failures:
     print("FAIL")
     for failure in failures:
         print(" -", failure)
     sys.exit(1)
-print("PASS: dasmig-gen usage errors, 17 kinds and holidays, thread invariance, ranges, formats, requests and known outputs.")
+print("PASS: dasmig-gen usage errors, 19 kinds, holidays and validate, thread invariance, ranges, formats, requests and known outputs.")

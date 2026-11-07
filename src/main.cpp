@@ -11,6 +11,8 @@
 #include <dasmig/citygen.hpp>
 #include <dasmig/countrygen.hpp>
 #include <dasmig/devicegen.hpp>
+#include <dasmig/fingen.hpp>
+#include <dasmig/idgen.hpp>
 #include <dasmig/interestgen.hpp>
 #include <dasmig/namegen.hpp>
 #include <dasmig/nicknamegen.hpp>
@@ -44,7 +46,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.7.0"
+#define DASMIG_GEN_VERSION "3.8.0"
 #endif
 
 namespace
@@ -77,8 +79,21 @@ Kinds:
   timezone    an IANA time zone with its offset, drawn by population
   holidays    a country's public holidays in a year (a lookup: one row per holiday,
               no batch options)
+  identity    national numbers and documents, as test data: see Limits below
+  finance     bank accounts and payment cards, as test data: see Limits below
+  validate    SCHEME TEXT: whether a number, an account or a card is well formed (a lookup,
+              no batch options; exit 0 if valid, 3 if not). SCHEME is a scheme key (br-cpf,
+              iban-de), or "card" for a card number with the networks it could belong to
 
-Batch options (every kind but holidays):
+Limits (identity, finance, and user and persona with --identity or --finance):
+  Without --safe, numbers, accounts and cards are structurally valid and may match a real
+  person's; nothing is looked up. They are test data: never use them to identify anyone, to
+  open accounts, to pass an identity or payment check, or on a live payment system. Trying
+  card numbers on a live system is card testing, which is fraud. --safe means different things
+  per scheme and for many accounts promises nothing: see the id-generator and
+  finance-generator documentation.
+
+Batch options (every kind but holidays and validate):
   --count N          number of items (default 1)
   --seed HEX         batch seed, 1 to 16 hexadecimal digits (default random, printed to stderr)
   --first N          index of the first item (default 0); item i is the single call with
@@ -95,7 +110,8 @@ Request options (the ones a kind understands; the rest is drawn):
   --country CC       ISO 3166-1 alpha-2 code        (persona, name, surname, city, birth, biodata,
                                                      interest, occupation, user, family, device, locale,
                                                      timezone; holidays requires it)
-  --sex male|female                                 (persona, birth, biodata, interest, occupation, user, family)
+  --sex male|female                                 (persona, birth, biodata, interest, occupation, user, family,
+                                                     identity; finance with --with-name)
   --age N or MIN-MAX                                (persona, birth, biodata, interest, occupation, user;
                                                      biodata, interest, occupation and family take one age)
   --reference-date YYYY-MM-DD   the date ages are computed at (persona, birth, user, family);
@@ -114,9 +130,24 @@ Request options (the ones a kind understands; the rest is drawn):
   --language CODE    ISO 639 code: only that language's tags; with no --country, the country is
                      drawn by its speakers (locale)
   --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user);
-                     IP addresses from the documentation ranges (device, user --device)
-  --unique KEY       no two items share the key: email or username (user), ip (device)
+                     IP addresses from the documentation ranges (device, user --device);
+                     numbers, documents, accounts and cards by the libraries' safe methods
+                     (identity, finance, and user and persona with --identity or --finance)
+  --unique KEY       no two items share the key: email or username (user), ip (device),
+                     number (identity), account or card (finance)
   --device           also the device of the user's last sign-in, as "device" (user)
+  --identity         also the person's numbers and documents, as "identity" (user, persona)
+  --finance          also the person's accounts and cards, as "finance" (user, persona; a
+                     persona's are a chance, by the country's Global Findex shares)
+  --with-name        draw a name and a birth first and pass them in, which is what gives a document
+                     its MRZ and a card its holder; adds "name", and --age applies (identity, finance)
+  --scheme A,B       the number schemes (br-cpf); default the country's primary (identity)
+  --document A,B     passport, id_card; default none (identity)
+  --accounts A,B     current, savings, or none; default one current (finance)
+  --cards A,B        debit, credit, prepaid, any; default none (finance)
+  --network NAME     the card network (visa); default drawn for the country (finance)
+  --card-source S    network_range, test_number or wrong_check; default network_range,
+                     test_number with --safe (finance)
   --platform KEY     android-phone, ios-phone, windows-desktop, macos-desktop, ipad,
                      android-tablet, linux-desktop, chromeos-desktop or other (device)
   --browser KEY      chrome, safari, edge, firefox, samsung, opera or yandex (device)
@@ -239,15 +270,18 @@ struct arguments
     std::map<std::string, std::string> request; // --country, --sex, ... (without the dashes)
     std::set<std::string> flags;                // --uniform
     std::set<std::string> batch_given;          // --count, --seed, ... as given (holidays takes none)
+    std::vector<std::string> operands;          // validate's scheme and text
 };
 
 const std::set<std::string> value_options{"country", "sex",   "age",    "reference-date", "traits",    "gender",
                                           "name",    "region", "unique", "up",           "down",      "platform",
                                           "browser", "ip",    "locale", "lat",          "lon",       "start",
-                                          "days",    "units", "elevation", "warming",     "language",  "year"};
+                                          "days",    "units", "elevation", "warming",     "language",  "year",
+                                          "scheme",  "document", "accounts", "cards",     "network",   "card-source"};
 const std::set<std::string> kinds{"persona", "name",     "surname",    "nickname", "city",   "country",
                                   "birth",   "biodata",  "trait",      "interest", "occupation", "user",
-                                  "family",  "device",   "weather",    "locale",   "timezone",   "holidays"};
+                                  "family",  "device",   "weather",    "locale",   "timezone",   "holidays",
+                                  "identity", "finance", "validate"};
 
 arguments parse_arguments(int argc, char** argv)
 {
@@ -257,8 +291,9 @@ arguments parse_arguments(int argc, char** argv)
         std::string arg = argv[i];
         if (!arg.starts_with("--"))
         {
-            if (!args.kind.empty()) throw usage_error("unexpected argument '" + arg + "'");
-            args.kind = arg;
+            if (args.kind.empty()) args.kind = arg;
+            else if (args.kind == "validate" && args.operands.size() < 2) args.operands.push_back(arg);
+            else throw usage_error("unexpected argument '" + arg + "'");
             continue;
         }
         std::string name = arg.substr(2);
@@ -270,7 +305,8 @@ arguments parse_arguments(int argc, char** argv)
         }
         if (name == "uniform" || name == "safe" || name == "relations" || name == "stepparents" || name == "home" ||
             name == "device" || name == "city" || name == "hourly" || name == "historical" ||
-            name == "no-spatial" || name == "optional" || name == "observances")
+            name == "no-spatial" || name == "optional" || name == "observances" || name == "identity" ||
+            name == "finance" || name == "with-name")
         {
             args.flags.insert(name);
             continue;
@@ -303,7 +339,8 @@ arguments parse_arguments(int argc, char** argv)
 
 // The options a kind understands; any other request option is an error.
 const std::map<std::string, std::set<std::string>> accepted{
-    {"persona", {"country", "sex", "age", "reference-date", "traits", "uniform", "relations", "up", "down", "stepparents", "home"}},
+    {"persona", {"country", "sex", "age", "reference-date", "traits", "uniform", "relations", "up", "down", "stepparents", "home",
+                 "safe", "identity", "finance", "scheme", "document", "accounts", "cards", "network", "card-source"}},
     {"name", {"country", "gender"}},
     {"surname", {"country", "gender"}},
     {"nickname", {"name"}},
@@ -314,14 +351,19 @@ const std::map<std::string, std::set<std::string>> accepted{
     {"trait", {"traits"}},
     {"interest", {"country", "sex", "age"}},
     {"occupation", {"country", "sex", "age"}},
-    {"user", {"country", "sex", "age", "reference-date", "safe", "unique", "device"}},
+    {"user", {"country", "sex", "age", "reference-date", "safe", "unique", "device",
+              "identity", "finance", "scheme", "document", "accounts", "cards", "network", "card-source"}},
     {"family", {"country", "sex", "age", "reference-date", "uniform", "up", "down", "stepparents", "home"}},
     {"device", {"country", "reference-date", "platform", "browser", "ip", "locale", "safe", "unique", "uniform"}},
     {"weather", {"lat", "lon", "city", "country", "start", "days", "units", "elevation", "warming", "hourly", "historical",
                  "no-spatial"}},
     {"locale", {"country", "language", "uniform"}},
     {"timezone", {"country", "reference-date", "uniform"}},
-    {"holidays", {"country", "year", "optional", "observances"}}};
+    {"holidays", {"country", "year", "optional", "observances"}},
+    {"identity", {"country", "sex", "age", "reference-date", "scheme", "document", "safe", "unique", "uniform", "with-name"}},
+    {"finance", {"country", "sex", "age", "reference-date", "accounts", "cards", "network", "card-source", "safe", "unique",
+                 "uniform", "with-name"}},
+    {"validate", {"reference-date"}}};
 
 void check_request_options(const arguments& args)
 {
@@ -333,6 +375,9 @@ void check_request_options(const arguments& args)
         if (args.kind == "device" && unique->second != "ip") throw usage_error("--unique must be ip for device");
         if (args.kind == "user" && unique->second != "email" && unique->second != "username")
             throw usage_error("--unique must be email or username");
+        if (args.kind == "identity" && unique->second != "number") throw usage_error("--unique must be number for identity");
+        if (args.kind == "finance" && unique->second != "account" && unique->second != "card")
+            throw usage_error("--unique must be account or card for finance");
     }
     if (const auto ip = args.request.find("ip");
         ip != args.request.end() && ip->second != "v4" && ip->second != "v6" && ip->second != "any")
@@ -358,6 +403,29 @@ void check_request_options(const arguments& args)
         if (!args.request.contains("country")) throw usage_error("holidays needs --country");
         if (!args.request.contains("year")) throw usage_error("holidays needs --year");
     }
+    if (args.kind == "validate")
+    {
+        for (const auto& name : args.batch_given)
+            throw usage_error("--" + name + " does not apply to validate (a lookup)");
+        if (args.operands.size() != 2) throw usage_error("validate needs a scheme and a text: validate SCHEME TEXT");
+    }
+    if ((args.kind == "identity" || args.kind == "finance") && !args.flags.contains("with-name"))
+    {
+        if (args.request.contains("age")) throw usage_error("--age needs --with-name for " + args.kind);
+        if (args.kind == "finance" && args.request.contains("sex")) throw usage_error("--sex needs --with-name for finance");
+    }
+    if (args.kind == "persona" || args.kind == "user")
+    {
+        for (const char* name : {"scheme", "document"})
+            if (args.request.contains(name) && !args.flags.contains("identity"))
+                throw usage_error(std::string{"--"} + name + " needs --identity for " + args.kind);
+        for (const char* name : {"accounts", "cards", "network", "card-source"})
+            if (args.request.contains(name) && !args.flags.contains("finance"))
+                throw usage_error(std::string{"--"} + name + " needs --finance for " + args.kind);
+    }
+    if (args.kind == "persona" && args.flags.contains("safe") && !args.flags.contains("identity") &&
+        !args.flags.contains("finance"))
+        throw usage_error("--safe needs --identity or --finance for persona");
     if (args.kind == "persona" && !args.flags.contains("relations"))
     {
         for (const char* name : {"up", "down"})
@@ -372,6 +440,13 @@ std::optional<std::string> get(const arguments& args, const std::string& key)
     const auto it = args.request.find(key);
     if (it == args.request.end()) return std::nullopt;
     return it->second;
+}
+
+std::string lower(std::string text)
+{
+    std::ranges::transform(text, text.begin(),
+                           [](unsigned char c) { return static_cast<char>(c >= 'A' && c <= 'Z' ? c + 32 : c); });
+    return text;
 }
 
 std::string upper(std::string text)
@@ -627,6 +702,216 @@ void emit_list(const output_format& format, std::ostream& out, const std::vector
     }
 }
 
+// The parts of a comma-separated list.
+std::vector<std::string> comma_list(const std::string& text)
+{
+    std::vector<std::string> parts;
+    std::size_t from = 0;
+    while (true)
+    {
+        const auto comma = text.find(',', from);
+        parts.push_back(text.substr(from, comma - from));
+        if (comma == std::string::npos) return parts;
+        from = comma + 1;
+    }
+}
+
+// --scheme, --document, --safe and --uniform as a request for numbers and documents.
+dasmig::identity_request identity_options(const arguments& args)
+{
+    dasmig::identity_request request;
+    if (const auto schemes = get(args, "scheme")) request.schemes = comma_list(*schemes);
+    if (const auto documents = get(args, "document"))
+        for (const auto& part : comma_list(*documents))
+        {
+            if (part == "passport") request.documents.push_back(dasmig::id_document_kind::passport);
+            else if (part == "id_card") request.documents.push_back(dasmig::id_document_kind::id_card);
+            else throw usage_error("--document must list passport or id_card, not '" + part + "'");
+        }
+    request.safe = args.flags.contains("safe");
+    request.weighted = !args.flags.contains("uniform");
+    return request;
+}
+
+// --accounts, --cards, --network, --card-source, --safe and --uniform as a
+// request for accounts and cards.
+dasmig::finance_request finance_options(const arguments& args)
+{
+    dasmig::finance_request request;
+    if (const auto accounts = get(args, "accounts"))
+    {
+        request.accounts.clear();
+        if (*accounts != "none")
+            for (const auto& part : comma_list(*accounts))
+            {
+                if (part == "current") request.accounts.push_back(dasmig::account_kind::current);
+                else if (part == "savings") request.accounts.push_back(dasmig::account_kind::savings);
+                else throw usage_error("--accounts must list current or savings, or be none, not '" + part + "'");
+            }
+    }
+    if (const auto cards = get(args, "cards"))
+        for (const auto& part : comma_list(*cards))
+        {
+            if (part == "debit") request.cards.emplace_back(dasmig::card_kind::debit);
+            else if (part == "credit") request.cards.emplace_back(dasmig::card_kind::credit);
+            else if (part == "prepaid") request.cards.emplace_back(dasmig::card_kind::prepaid);
+            else if (part == "any") request.cards.emplace_back(std::nullopt);
+            else throw usage_error("--cards must list debit, credit, prepaid or any, not '" + part + "'");
+        }
+    if (const auto source = get(args, "card-source"))
+    {
+        if (*source == "network_range") request.card_numbers = dasmig::card_source::network_range;
+        else if (*source == "test_number") request.card_numbers = dasmig::card_source::test_number;
+        else if (*source == "wrong_check") request.card_numbers = dasmig::card_source::wrong_check;
+        else throw usage_error("--card-source must be network_range, test_number or wrong_check");
+    }
+    if (const auto network = get(args, "network")) request.network = *network;
+    request.safe = args.flags.contains("safe");
+    request.weighted = !args.flags.contains("uniform");
+    return request;
+}
+
+// A person drawn for --with-name.
+struct drawn_person
+{
+    std::string country;
+    std::chrono::year_month_day birth_date;
+    dasmig::sex bio_sex;
+    std::string full_name;
+    std::string given;
+    std::string surname;        // the first family name, or the patronymic where there is none
+    std::string second_surname; // the second of a double surname; empty for none
+};
+
+std::optional<std::string> given_text(std::string text)
+{
+    if (text.empty()) return std::nullopt;
+    return text;
+}
+
+std::string name_part(const dasmig::name& n, dasmig::name_role role)
+{
+    std::string out;
+    for (std::size_t i = 0; i < n.parts().size(); ++i)
+    {
+        if (n.roles()[i] != role) continue;
+        if (!out.empty()) out.push_back(' ');
+        out += core::to_utf8(n.parts()[i]);
+    }
+    return out;
+}
+
+// Draws the birth and the name. With no country given, `draw_country` draws one
+// from a seed, and a country with no names or births is drawn again.
+template <typename DrawCountry>
+drawn_person draw_person(const std::optional<std::string>& country, const dasmig::birth_request& ask, std::uint64_t seed,
+                         const DrawCountry& draw_country)
+{
+    const auto country_seed = core::rng{seed}.split("country").seed();
+    for (std::uint64_t attempt = 0; attempt < 256; ++attempt)
+    {
+        std::string code = country ? upper(*country) : draw_country(core::hash_combine(country_seed, attempt));
+        const auto culture = dasmig::ng::to_culture(core::from_utf8(lower(code)));
+        if (culture == dasmig::culture::any)
+        {
+            if (country) throw std::invalid_argument("--with-name: name-generator has no names for country " + code);
+            continue;
+        }
+        try
+        {
+            auto request = ask;
+            request.country_code = code;
+            const auto birth = dasmig::bthg::instance().get_birth(request, core::rng{seed}.split("birth").seed());
+            const auto n = dasmig::ng::instance().get_full_name(
+                {.gender = birth.bio_sex == dasmig::sex::female ? dasmig::gender::f : dasmig::gender::m, .culture = culture},
+                core::rng{seed}.split("name").seed());
+            return drawn_person{.country = code,
+                                .birth_date = std::chrono::year{birth.year} / std::chrono::month{birth.month} /
+                                              std::chrono::day{birth.day},
+                                .bio_sex = birth.bio_sex,
+                                .full_name = core::to_utf8(static_cast<std::wstring>(n)),
+                                .given = core::to_utf8(n.given()),
+                                .surname = n.family().empty() ? core::to_utf8(n.patronymic())
+                                                              : name_part(n, dasmig::name_role::family),
+                                .second_surname = name_part(n, dasmig::name_role::family2)};
+        }
+        catch (const std::invalid_argument&)
+        {
+            if (country) throw;
+        }
+    }
+    throw std::runtime_error("--with-name: no country drawn has names and births");
+}
+
+// The JSON of a result with the person's name as its first member.
+std::string with_name_member(const std::string& name, const std::string& json)
+{
+    core::json_writer w;
+    w.begin_object().field("name", name).end_object();
+    std::string out = w.str();
+    out.back() = ',';
+    out.append(json, 1, std::string::npos);
+    return out;
+}
+
+// The key for --unique of an item without the keyed value: one no other item
+// has, so that it is never taken for a duplicate.
+std::string unique_key_or_seed(const std::string& key, std::uint64_t seed)
+{
+    return key.empty() ? "no key " + hex16(seed) : key;
+}
+
+// validate SCHEME TEXT: id-generator's schemes, finance-generator's, and "card".
+int run_validate(const arguments& args, const output_format& format, std::ostream& out)
+{
+    const auto& scheme = args.operands[0];
+    const auto& text = args.operands[1];
+    const auto date = get(args, "reference-date");
+    core::json_writer w;
+    w.begin_object().field("scheme", scheme).field("text", text);
+    bool valid = false;
+    if (scheme == "card")
+    {
+        if (date) throw usage_error("--reference-date applies only to id-generator's schemes");
+        const auto& banks = dasmig::fng::instance();
+        valid = banks.card_valid(text);
+        w.field("valid", valid).key("networks").begin_array();
+        if (valid)
+            for (const auto& network : banks.card_networks(text)) w.value(network);
+        w.end_array();
+    }
+    else
+    {
+        bool known = true;
+        try
+        {
+            std::optional<std::chrono::year_month_day> reference;
+            if (date) reference = parse_date(*date);
+            valid = dasmig::idg::instance().is_valid(scheme, text, reference);
+        }
+        catch (const std::invalid_argument&)
+        {
+            known = false;
+        }
+        if (!known)
+        {
+            if (date) throw usage_error("--reference-date applies only to id-generator's schemes");
+            try
+            {
+                valid = dasmig::fng::instance().is_valid(scheme, text);
+            }
+            catch (const std::invalid_argument&)
+            {
+                throw std::runtime_error("unknown scheme '" + scheme + "': not a scheme of id-generator or finance-generator, or \"card\"");
+            }
+        }
+        w.field("valid", valid);
+    }
+    w.end_object();
+    emit_list(format, out, {w.str()});
+    return valid ? 0 : 3;
+}
+
 void load_full_tier(const arguments& args)
 {
     if (args.tier != "full") return;
@@ -641,7 +926,8 @@ void load_full_tier(const arguments& args)
     const bool is_user = args.kind == "user";
     const bool is_family = args.kind == "family";
     const auto wants = [&](const char* kind) { return all || is_user || args.kind == kind; };
-    if (wants("name") || wants("surname") || is_family || all)
+    const bool with_name = args.flags.contains("with-name");
+    if (wants("name") || wants("surname") || is_family || all || with_name)
         check(dasmig::ng::instance().load(dasmig::dataset::full), "name-generator");
     const bool weather_city = args.kind == "weather" && args.flags.contains("city");
     if (wants("city") || all || weather_city) check(dasmig::cg::instance().load(dasmig::dataset::full), "city-generator");
@@ -649,10 +935,10 @@ void load_full_tier(const arguments& args)
     const bool country_data = args.kind == "locale" || args.kind == "timezone" || args.kind == "holidays";
     if (wants("country") || all || country_data)
         check(dasmig::cntg::instance().load(dasmig::dataset::full), "country-generator");
-    if (country_data && !dasmig::cntg::instance().has_locale_data())
+    if ((country_data || is_user) && !dasmig::cntg::instance().has_locale_data())
         throw std::runtime_error("the full tier of country-generator has no locale tables; check out "
                                  "country-generator 3.3.0 or later");
-    if (wants("birth") || is_family || all) check(dasmig::bthg::instance().load(dasmig::dataset::full), "birth-generator");
+    if (wants("birth") || is_family || all || with_name) check(dasmig::bthg::instance().load(dasmig::dataset::full), "birth-generator");
     if (is_family || (all && args.flags.contains("relations"))) check(dasmig::relg::instance().load(dasmig::dataset::full), "relationship-generator");
     if (wants("biodata") || all) check(dasmig::bdg::instance().load(dasmig::dataset::full), "biodata-generator");
     if (wants("interest") || all) check(dasmig::intg::instance().load(dasmig::dataset::full), "interest-generator");
@@ -667,6 +953,10 @@ void load_full_tier(const arguments& args)
     if (args.kind == "device" || (is_user && args.flags.contains("device")))
         check(dasmig::dvg::instance().load(dasmig::dataset::full), "device-generator");
     if (wants("nickname")) check(dasmig::nng::instance().load(dasmig::dataset::full), "nickname-generator");
+    if (args.kind == "identity" || args.kind == "validate" || args.flags.contains("identity"))
+        check(dasmig::idg::instance().load(dasmig::dataset::full), "id-generator");
+    if (args.kind == "finance" || args.kind == "validate" || args.flags.contains("finance"))
+        check(dasmig::fng::instance().load(dasmig::dataset::full), "finance-generator");
     if (all || wants("city") || weather_city)
     {
         const auto admin1 = std::filesystem::path{"city-generator"} / "resources" / "admin1CodesASCII.txt";
@@ -695,7 +985,7 @@ int run(const arguments& args)
     load_full_tier(args);
     if (args.kind == "weather" && args.flags.contains("historical")) load_weather_history(data_base);
 
-    const bool lookup = args.kind == "holidays";
+    const bool lookup = args.kind == "holidays" || args.kind == "validate";
     const std::uint64_t seed = args.seed ? *args.seed : lookup ? 0 : core::rng::entropy_seed();
     if (!args.seed && !lookup) std::fprintf(stderr, "seed: %s\n", hex16(seed).c_str());
     core::batch_options options{.count = args.count, .first = args.first, .threads = args.threads};
@@ -721,6 +1011,14 @@ int run(const arguments& args)
     const auto date_text = get(args, "reference-date");
     const auto traits_text = get(args, "traits");
 
+    if (args.kind == "validate")
+    {
+        const int status = run_validate(args, format, out);
+        out.flush();
+        if (!out) throw std::runtime_error("writing the output failed");
+        return status;
+    }
+
     if (args.kind == "persona")
     {
         dasmig::persona_request request;
@@ -738,6 +1036,8 @@ int run(const arguments& args)
             family.home = args.flags.contains("home");
             request.relations = family;
         }
+        if (args.flags.contains("identity")) request.identity = identity_options(args);
+        if (args.flags.contains("finance")) request.finance = finance_options(args);
         const auto& gen = dasmig::psg::instance();
         emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_persona(request, s).to_json(); });
@@ -745,7 +1045,12 @@ int run(const arguments& args)
     else if (args.kind == "name" || args.kind == "surname")
     {
         dasmig::name_request request;
-        if (country) request.culture = dasmig::ng::to_culture(core::from_utf8(upper(*country)));
+        if (country)
+        {
+            request.culture = dasmig::ng::to_culture(core::from_utf8(lower(*country)));
+            if (request.culture == dasmig::culture::any)
+                throw std::invalid_argument("name-generator has no names for country " + upper(*country));
+        }
         if (const auto g = get(args, "gender"))
             request.gender = dasmig::ng::to_gender(core::from_utf8(*g));
         const auto& gen = dasmig::ng::instance();
@@ -833,6 +1138,8 @@ int run(const arguments& args)
         if (date_text) request.reference_date = parse_date(*date_text);
         request.safe = args.flags.contains("safe");
         request.device = args.flags.contains("device");
+        if (args.flags.contains("identity")) request.identity = identity_options(args);
+        if (args.flags.contains("finance")) request.finance = finance_options(args);
         const bool by_username = get(args, "unique") == std::optional<std::string>{"username"};
         const auto& gen = dasmig::usg::instance();
         emit_keyed(format, out, options, seed,
@@ -961,6 +1268,89 @@ int run(const arguments& args)
         const auto& gen = dasmig::cntg::instance();
         emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_time_zone(request, s).to_json(); });
+    }
+    else if (args.kind == "identity")
+    {
+        auto request = identity_options(args);
+        if (country) request.country = upper(*country);
+        if (sex_text) request.sex = parse_sex(*sex_text);
+        if (date_text) request.reference_date = parse_date(*date_text);
+        dasmig::birth_request ask;
+        if (sex_text) ask.bio_sex = parse_sex(*sex_text);
+        if (age_text) ask.ages = parse_ages(*age_text);
+        ask.reference_date = request.reference_date;
+        const bool with_name = args.flags.contains("with-name");
+        const auto& gen = dasmig::idg::instance();
+        emit_keyed(format, out, options, seed,
+                   [&](std::uint64_t s)
+                   {
+                       auto own = request;
+                       std::string full_name;
+                       if (with_name)
+                       {
+                           const auto person = draw_person(country, ask, s, [&](std::uint64_t c)
+                           {
+                               dasmig::identity_request draw;
+                               draw.weighted = request.weighted;
+                               return gen.get_identity(draw, c).country_code;
+                           });
+                           own.country = person.country;
+                           own.birth_date = person.birth_date;
+                           own.sex = person.bio_sex;
+                           own.given_names = given_text(person.given);
+                           own.surname = given_text(person.surname);
+                           own.second_surname = given_text(person.second_surname);
+                           full_name = person.full_name;
+                       }
+                       const auto item = gen.get_identity(own, s);
+                       const auto json = item.to_json();
+                       return keyed_json{with_name ? with_name_member(full_name, json) : json,
+                                         unique_key_or_seed(item.numbers.empty() ? std::string{} : item.numbers.front().value, s)};
+                   });
+    }
+    else if (args.kind == "finance")
+    {
+        auto request = finance_options(args);
+        if (country) request.country = upper(*country);
+        if (date_text) request.reference_date = parse_date(*date_text);
+        dasmig::birth_request ask;
+        if (sex_text) ask.bio_sex = parse_sex(*sex_text);
+        ask.ages = age_text ? parse_ages(*age_text) : dasmig::age_range{.min = 18, .max = 80};
+        ask.reference_date = request.reference_date;
+        const bool with_name = args.flags.contains("with-name");
+        const bool by_card = get(args, "unique") == std::optional<std::string>{"card"};
+        const auto& gen = dasmig::fng::instance();
+        emit_keyed(format, out, options, seed,
+                   [&](std::uint64_t s)
+                   {
+                       auto own = request;
+                       std::string full_name;
+                       if (with_name)
+                       {
+                           const auto person = draw_person(country, ask, s, [&](std::uint64_t c)
+                           {
+                               dasmig::finance_request draw;
+                               draw.accounts.clear();
+                               draw.weighted = request.weighted;
+                               return gen.get_finance(draw, c).country_code;
+                           });
+                           own.country = person.country;
+                           own.birth_date = person.birth_date;
+                           own.given_names = given_text(person.given);
+                           own.surname = given_text(person.surname);
+                           full_name = person.full_name;
+                       }
+                       const auto item = gen.get_finance(own, s);
+                       const auto json = item.to_json();
+                       std::string key;
+                       if (by_card && !item.cards.empty()) key = item.cards.front().number;
+                       if (!by_card && !item.accounts.empty())
+                       {
+                           const auto& account = item.accounts.front();
+                           key = account.iban.empty() ? account.bank_code + "/" + account.branch_code + "/" + account.account_number : account.iban;
+                       }
+                       return keyed_json{with_name ? with_name_member(full_name, json) : json, unique_key_or_seed(key, s)};
+                   });
     }
     else if (args.kind == "holidays")
     {
