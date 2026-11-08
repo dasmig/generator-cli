@@ -18,12 +18,14 @@
 #include <dasmig/nicknamegen.hpp>
 #include <dasmig/occupationgen.hpp>
 #include <dasmig/personagen.hpp>
+#include <dasmig/propertygen.hpp>
 #include <dasmig/relgen.hpp>
 #include <dasmig/traitgen.hpp>
 #include <dasmig/usergen.hpp>
 #include <dasmig/weathergen.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -46,7 +48,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.8.0"
+#define DASMIG_GEN_VERSION "3.9.0"
 #endif
 
 namespace
@@ -81,6 +83,8 @@ Kinds:
               no batch options)
   identity    national numbers and documents, as test data: see Limits below
   finance     bank accounts and payment cards, as test data: see Limits below
+  property    a household's home: dwelling type, tenure, rooms, floor area, year built
+              and monthly cost
   validate    SCHEME TEXT: whether a number, an account or a card is well formed (a lookup,
               no batch options; exit 0 if valid, 3 if not). SCHEME is a scheme key (br-cpf,
               iban-de), or "card" for a card number with the networks it could belong to
@@ -109,12 +113,14 @@ Batch options (every kind but holidays and validate):
 Request options (the ones a kind understands; the rest is drawn):
   --country CC       ISO 3166-1 alpha-2 code        (persona, name, surname, city, birth, biodata,
                                                      interest, occupation, user, family, device, locale,
-                                                     timezone; holidays requires it)
+                                                     timezone, property; holidays requires it)
   --sex male|female                                 (persona, birth, biodata, interest, occupation, user, family,
                                                      identity; finance with --with-name)
   --age N or MIN-MAX                                (persona, birth, biodata, interest, occupation, user;
-                                                     biodata, interest, occupation and family take one age)
+                                                     biodata, interest, occupation and family take one age;
+                                                     property one, the reference person's, 16 to 110)
   --reference-date YYYY-MM-DD   the date ages are computed at (persona, birth, user, family);
+                     for property, no home is built after it;
                      for device, the date its models and versions are those of (2021-01-01 or later);
                      for timezone, the date of the offset reported (2000 or later; 1970 with --tier full)
   --traits N         number of personality traits   (persona, trait)
@@ -126,7 +132,7 @@ Request options (the ones a kind understands; the rest is drawn):
   --stepparents      also a parent's new partner, as stepfather or stepmother, and their children (family; persona with --relations)
   --home             also who the person lives with, as "household" (family; persona with --relations)
   --uniform          uniform instead of population-weighted choice (city, country, birth, family, device,
-                     locale, timezone)
+                     locale, timezone, property)
   --language CODE    ISO 639 code: only that language's tags; with no --country, the country is
                      drawn by its speakers (locale)
   --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user);
@@ -139,6 +145,8 @@ Request options (the ones a kind understands; the rest is drawn):
   --identity         also the person's numbers and documents, as "identity" (user, persona)
   --finance          also the person's accounts and cards, as "finance" (user, persona; a
                      persona's are a chance, by the country's Global Findex shares)
+  --property         also the persona's home and its household's earnings, as "home" and
+                     "household_income"; --area, --type and --tenure then apply (persona)
   --with-name        draw a name and a birth first and pass them in, which is what gives a document
                      its MRZ and a card its holder; adds "name", and --age applies (identity, finance)
   --scheme A,B       the number schemes (br-cpf); default the country's primary (identity)
@@ -148,6 +156,17 @@ Request options (the ones a kind understands; the rest is drawn):
   --network NAME     the card network (visa); default drawn for the country (finance)
   --card-source S    network_range, test_number or wrong_check; default network_range,
                      test_number with --safe (finance)
+  --area A           city, town or rural (property; persona with --property)
+  --type T           detached, semi_detached, flat_small, flat_large, informal or other
+                     (property; persona with --property)
+  --tenure T         owner_outright, owner_mortgage, tenant_market or tenant_reduced
+                     (property; persona with --property)
+  --household-size N, --household-type T, --children N
+                     the household: its size, its type (one_person, couple, nuclear,
+                     single_parent, with_parents, multi_generation, other) and the members
+                     under 18; the rest is drawn to fit (property)
+  --income AMOUNT    the household's gross annual income in the country's currency, which
+                     gives the home its monthly cost; needs --country (property)
   --platform KEY     android-phone, ios-phone, windows-desktop, macos-desktop, ipad,
                      android-tablet, linux-desktop, chromeos-desktop or other (device)
   --browser KEY      chrome, safari, edge, firefox, samsung, opera or yandex (device)
@@ -277,11 +296,13 @@ const std::set<std::string> value_options{"country", "sex",   "age",    "referen
                                           "name",    "region", "unique", "up",           "down",      "platform",
                                           "browser", "ip",    "locale", "lat",          "lon",       "start",
                                           "days",    "units", "elevation", "warming",     "language",  "year",
-                                          "scheme",  "document", "accounts", "cards",     "network",   "card-source"};
+                                          "scheme",  "document", "accounts", "cards",     "network",   "card-source",
+                                          "area",    "type",  "tenure", "household-size", "household-type", "children",
+                                          "income"};
 const std::set<std::string> kinds{"persona", "name",     "surname",    "nickname", "city",   "country",
                                   "birth",   "biodata",  "trait",      "interest", "occupation", "user",
                                   "family",  "device",   "weather",    "locale",   "timezone",   "holidays",
-                                  "identity", "finance", "validate"};
+                                  "identity", "finance", "validate", "property"};
 
 arguments parse_arguments(int argc, char** argv)
 {
@@ -306,7 +327,7 @@ arguments parse_arguments(int argc, char** argv)
         if (name == "uniform" || name == "safe" || name == "relations" || name == "stepparents" || name == "home" ||
             name == "device" || name == "city" || name == "hourly" || name == "historical" ||
             name == "no-spatial" || name == "optional" || name == "observances" || name == "identity" ||
-            name == "finance" || name == "with-name")
+            name == "finance" || name == "with-name" || name == "property")
         {
             args.flags.insert(name);
             continue;
@@ -340,7 +361,8 @@ arguments parse_arguments(int argc, char** argv)
 // The options a kind understands; any other request option is an error.
 const std::map<std::string, std::set<std::string>> accepted{
     {"persona", {"country", "sex", "age", "reference-date", "traits", "uniform", "relations", "up", "down", "stepparents", "home",
-                 "safe", "identity", "finance", "scheme", "document", "accounts", "cards", "network", "card-source"}},
+                 "safe", "identity", "finance", "scheme", "document", "accounts", "cards", "network", "card-source",
+                 "property", "area", "type", "tenure"}},
     {"name", {"country", "gender"}},
     {"surname", {"country", "gender"}},
     {"nickname", {"name"}},
@@ -363,7 +385,9 @@ const std::map<std::string, std::set<std::string>> accepted{
     {"identity", {"country", "sex", "age", "reference-date", "scheme", "document", "safe", "unique", "uniform", "with-name"}},
     {"finance", {"country", "sex", "age", "reference-date", "accounts", "cards", "network", "card-source", "safe", "unique",
                  "uniform", "with-name"}},
-    {"validate", {"reference-date"}}};
+    {"validate", {"reference-date"}},
+    {"property", {"country", "area", "type", "tenure", "household-size", "household-type", "children", "age", "income",
+                  "reference-date", "uniform"}}};
 
 void check_request_options(const arguments& args)
 {
@@ -423,6 +447,12 @@ void check_request_options(const arguments& args)
             if (args.request.contains(name) && !args.flags.contains("finance"))
                 throw usage_error(std::string{"--"} + name + " needs --finance for " + args.kind);
     }
+    if (args.kind == "persona")
+        for (const char* name : {"area", "type", "tenure"})
+            if (args.request.contains(name) && !args.flags.contains("property"))
+                throw usage_error(std::string{"--"} + name + " needs --property for persona");
+    if (args.kind == "property" && args.request.contains("income") && !args.request.contains("country"))
+        throw usage_error("--income needs --country (the amount is in its currency)");
     if (args.kind == "persona" && args.flags.contains("safe") && !args.flags.contains("identity") &&
         !args.flags.contains("finance"))
         throw usage_error("--safe needs --identity or --finance for persona");
@@ -771,6 +801,76 @@ dasmig::finance_request finance_options(const arguments& args)
     return request;
 }
 
+// The value whose name is `text`, from a list of names in the enum's order.
+template <typename E, std::size_t N>
+E named_value(const std::string& text, const std::array<std::string_view, N>& names, const std::string& option)
+{
+    for (std::size_t i = 0; i < N; ++i)
+        if (names[i] == text) return static_cast<E>(i);
+    std::string list;
+    for (std::size_t i = 0; i < N; ++i) list += (i == 0 ? "" : i + 1 == N ? " or " : ", ") + std::string{names[i]};
+    throw usage_error(option + " must be " + list);
+}
+
+// --area, --type, --tenure and --uniform as a request for a home; the
+// property kind adds the household, the age and the income.
+dasmig::property_request property_options(const arguments& args)
+{
+    static constexpr std::array<std::string_view, 3> areas{"city", "town", "rural"};
+    static constexpr std::array<std::string_view, 6> types{"detached",   "semi_detached", "flat_small",
+                                                           "flat_large", "informal",      "other"};
+    static constexpr std::array<std::string_view, 4> tenures{"owner_outright", "owner_mortgage", "tenant_market",
+                                                             "tenant_reduced"};
+    dasmig::property_request request;
+    if (const auto area = get(args, "area")) request.area = named_value<dasmig::settlement>(*area, areas, "--area");
+    if (const auto type = get(args, "type")) request.type = named_value<dasmig::dwelling_type>(*type, types, "--type");
+    if (const auto tenure = get(args, "tenure"))
+        request.holding = named_value<dasmig::tenure>(*tenure, tenures, "--tenure");
+    request.weighted = !args.flags.contains("uniform");
+    if (args.kind != "property") return request;
+
+    if (const auto country = get(args, "country")) request.country = upper(*country);
+    if (const auto size = get(args, "household-size"))
+    {
+        const auto n = parse_count(*size, "--household-size");
+        if (n < 1 || n > 30) throw usage_error("--household-size must be 1 to 30");
+        request.household_size = static_cast<std::uint8_t>(n);
+    }
+    if (const auto type = get(args, "household-type"))
+    {
+        if (!std::ranges::contains(dasmig::property_household_types, std::string_view{*type}))
+            throw usage_error("--household-type must be one_person, couple, nuclear, single_parent, with_parents, "
+                              "multi_generation or other");
+        request.household_type = *type;
+    }
+    if (const auto children = get(args, "children"))
+    {
+        const auto n = parse_count(*children, "--children");
+        if (n > 29) throw usage_error("--children must be 0 to 29");
+        request.children = static_cast<std::uint8_t>(n);
+    }
+    if (const auto age = get(args, "age"))
+    {
+        const auto n = parse_single_age(*age);
+        if (n < 16 || n > 110) throw usage_error("--age must be 16 to 110 for property (the reference person's)");
+        request.anchor_age = static_cast<std::uint8_t>(n);
+    }
+    if (const auto date = get(args, "reference-date")) request.reference_date = parse_date(*date);
+    if (const auto income = get(args, "income"))
+    {
+        const auto amount = parse_decimal(*income, "--income");
+        if (!(amount >= 0.0) || amount > 1e12) throw usage_error("--income must be an amount from 0 to 10^12");
+        // The currency the country's incomes are in (occupation-generator's,
+        // which property-generator's agrees with for every country they share).
+        const auto currency = dasmig::ocg::instance().income_currency(*request.country);
+        if (!currency)
+            throw std::invalid_argument("no income currency is known for " + *request.country +
+                                        "; leave --income out for a home without a cost");
+        request.household_income = core::money::from_major(amount, currency->first, currency->second);
+    }
+    return request;
+}
+
 // A person drawn for --with-name.
 struct drawn_person
 {
@@ -939,7 +1039,8 @@ void load_full_tier(const arguments& args)
         throw std::runtime_error("the full tier of country-generator has no locale tables; check out "
                                  "country-generator 3.3.0 or later");
     if (wants("birth") || is_family || all || with_name) check(dasmig::bthg::instance().load(dasmig::dataset::full), "birth-generator");
-    if (is_family || (all && args.flags.contains("relations"))) check(dasmig::relg::instance().load(dasmig::dataset::full), "relationship-generator");
+    if (is_family || (all && (args.flags.contains("relations") || args.flags.contains("property"))))
+        check(dasmig::relg::instance().load(dasmig::dataset::full), "relationship-generator");
     if (wants("biodata") || all) check(dasmig::bdg::instance().load(dasmig::dataset::full), "biodata-generator");
     if (wants("interest") || all) check(dasmig::intg::instance().load(dasmig::dataset::full), "interest-generator");
     if (wants("occupation") || all) check(dasmig::ocg::instance().load(dasmig::dataset::full), "occupation-generator");
@@ -957,6 +1058,10 @@ void load_full_tier(const arguments& args)
         check(dasmig::idg::instance().load(dasmig::dataset::full), "id-generator");
     if (args.kind == "finance" || args.kind == "validate" || args.flags.contains("finance"))
         check(dasmig::fng::instance().load(dasmig::dataset::full), "finance-generator");
+    if (args.kind == "property" || args.flags.contains("property"))
+        check(dasmig::pty::instance().load(dasmig::dataset::full), "property-generator");
+    if (args.kind == "property" && args.request.contains("income"))
+        check(dasmig::ocg::instance().load(dasmig::dataset::full), "occupation-generator");
     if (all || wants("city") || weather_city)
     {
         const auto admin1 = std::filesystem::path{"city-generator"} / "resources" / "admin1CodesASCII.txt";
@@ -1004,6 +1109,18 @@ int run(const arguments& args)
     output_format format{.name = args.format, .nullable = {}};
     if (args.format == "csv" && (args.kind == "occupation" || args.kind == "persona"))
         format.nullable = occupation_nullable(args.kind == "persona" ? "occupation." : "");
+    if (args.format == "csv" && (args.kind == "property" || args.flags.contains("property")))
+    {
+        const auto money = std::vector<std::string>{"amount", "currency"};
+        const auto object = [&](const std::string& column)
+        {
+            nullable_object out{.column = column, .columns = {}};
+            for (const auto& part : money) out.columns.push_back(column + "." + part);
+            return out;
+        };
+        format.nullable.push_back(object(args.kind == "persona" ? "home.monthly_cost" : "monthly_cost"));
+        if (args.kind == "persona") format.nullable.push_back(object("household_income"));
+    }
     const bool uniform = args.flags.contains("uniform");
     const auto country = get(args, "country");
     const auto sex_text = get(args, "sex");
@@ -1038,6 +1155,7 @@ int run(const arguments& args)
         }
         if (args.flags.contains("identity")) request.identity = identity_options(args);
         if (args.flags.contains("finance")) request.finance = finance_options(args);
+        if (args.flags.contains("property")) request.home = property_options(args);
         const auto& gen = dasmig::psg::instance();
         emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_persona(request, s).to_json(); });
@@ -1351,6 +1469,13 @@ int run(const arguments& args)
                        }
                        return keyed_json{with_name ? with_name_member(full_name, json) : json, unique_key_or_seed(key, s)};
                    });
+    }
+    else if (args.kind == "property")
+    {
+        const auto request = property_options(args);
+        const auto& gen = dasmig::pty::instance();
+        emit(format, out, options, seed,
+             [&](std::uint64_t s) { return gen.get_property(request, s).to_json(); });
     }
     else if (args.kind == "holidays")
     {
