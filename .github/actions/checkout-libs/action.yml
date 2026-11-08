@@ -44,6 +44,6 @@ runs:
     - uses: actions/checkout@v4
       with: {repository: dasmig/trait-generator, ref: v2.1.4, path: libs/trait-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/user-generator, ref: v3.0.0, path: libs/user-generator}
+      with: {repository: dasmig/user-generator, ref: v3.1.0, path: libs/user-generator}
     - uses: actions/checkout@v4
       with: {repository: dasmig/weather-generator, ref: v2.0.1, path: libs/weather-generator}
