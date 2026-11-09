@@ -19,7 +19,7 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 
 | Kind | What it generates | Request options |
 | --- | --- | --- |
-| `persona` | A complete character: name, country, city, birth, body, personality, interests, job | `--country --sex --age --reference-date --traits --relations --up --down --stepparents --home --identity --finance --safe` and their options |
+| `persona` | A complete character: name, country, city, birth, body, personality, interests, job | `--country --sex --age --reference-date --traits --relations --up --down --stepparents --home --identity --finance --safe --property --area --type --tenure` and their options |
 | `name`, `surname` | A given and family name, or a family name | `--country --gender` |
 | `nickname` | A nickname, from `--name` or the word lists | `--name` |
 | `city` | A city (GeoNames) | `--country --uniform` |
@@ -39,6 +39,7 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 | `identity` | National numbers and documents, as test data: a number with what it encodes, a passport with its MRZ | `--country --sex --scheme --document --reference-date --safe --unique --uniform --with-name --age` |
 | `finance` | Bank accounts and payment cards, as test data | `--country --accounts --cards --network --card-source --reference-date --safe --unique --uniform --with-name --sex --age` |
 | `validate` | Whether a number, an account or a card is well formed (a lookup, not a batch) | `SCHEME TEXT --reference-date` |
+| `property` | A household's home: dwelling type, tenure, rooms, floor area, year built and monthly cost | `--country --area --type --tenure --household-size --household-type --children --age --income --reference-date --uniform` |
 
 What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years, 0-120; `biodata`, `interest`, `occupation` and `family` take one age; `user` ages start at 13). Countries are ISO 3166-1 alpha-2 codes. The generator never reads the clock: pass `--reference-date YYYY-MM-DD` for ages as of a date.
 
@@ -57,6 +58,10 @@ What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years
 `identity` and `finance` give test data; read [the limits](#limits). `identity --scheme br-cpf,br-rg` picks the schemes, by default the country's primary, and `--document passport,id_card` adds documents. A document has no machine-readable zone and a card no holder without a name, so `--with-name` draws a name and a birth first, passes them in and adds the name as `name` (with it, `--age` applies, 18-80 by default for `finance`). A country drawn with `--with-name` is one with names. `finance --accounts current,savings` (or `none`) and `--cards debit,credit,prepaid,any` say what to make, `--network visa` the network, and `--card-source network_range`, `test_number` or `wrong_check` where the numbers come from. `--unique number` (`identity`), `--unique account` or `card` (`finance`) make no two items share it; an item without one is never a duplicate.
 
 `user` and `persona` take `--identity` and `--finance` to add those parts, with the same options, from their own birth date, sex, names and address or city. Nothing else about them changes. A persona's accounts and cards are a chance, by the country's Global Findex shares, and a user's are as asked.
+
+`property` draws a home that fits its country, area and household ([property-generator](https://github.com/dasmig/property-generator)). `--area city|town|rural`, `--type` (`detached`, `semi_detached`, `flat_small`, `flat_large`, `informal`, `other`) and `--tenure` (`owner_outright`, `owner_mortgage`, `tenant_market`, `tenant_reduced`) force those; `--household-size`, `--household-type` (`one_person`, `couple`, `nuclear`, `single_parent`, `with_parents`, `multi_generation`, `other`) and `--children` describe the household, and the rest is drawn to fit. `--age` is the reference person's (16-110). `--income AMOUNT`, the household's gross annual income in the country's currency, gives the home its `monthly_cost` (rent, or the owner's mortgage and charges); it needs `--country`. Without it `monthly_cost` is null. `--reference-date` is the date no home is built after.
+
+`persona --property` adds the persona's home as `home` and what everyone in its household earns as `household_income`, with `--area`, `--type` and `--tenure` as for `property`. The household is the family's with `--relations` (its `household` is then on), or one drawn for the home alone; each other adult's earnings are an occupation draw. Nothing else about the persona changes.
 
 `validate SCHEME TEXT` says whether a text is well formed: `validate br-cpf 111.444.777-35`, `validate iban-de "DE89 3704 0044 0532 0130 00"`, or `validate card 4242424242424242`, which also lists the networks the number could belong to. It prints `valid`, and exits 0 for valid and 3 for not, 1 for a scheme neither library has. `--reference-date` applies to numbers that encode a birth date. Valid means the structure and check digits are right: nothing says the number exists or belongs to anyone.
 

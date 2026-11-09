@@ -18,7 +18,7 @@ from pathlib import Path
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else "build/dasmig-gen"
 KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "biodata", "trait", "interest",
-         "occupation", "user", "family", "device", "weather", "locale", "timezone", "identity", "finance"]
+         "occupation", "user", "family", "device", "weather", "locale", "timezone", "identity", "finance", "property"]
 
 KNOWN = {
     ("persona", "1f"): "fb66afc902755597430c9a56afaf0635a4bc1f912b21c2ff4ca5cb4ca65483d7",
@@ -26,13 +26,14 @@ KNOWN = {
     ("city", "3"): "18363ff56b0229a14f7544258d3fc26e17c95d398a18683e605da11340f86aef",
     ("occupation", "4"): "7f63ac27e08c59e4fe327433adb30b15e6d45ca54f6fb3ba0ab7128dd32b3d00",
     ("family", "6"): "086654befa2efa30e64e440909bcb3a04bc914f10ac2bd7806f85200b9e79588",
-    ("user", "5"): "84164a0443f4a2fa49b96ab3b9aae2c79d8addc92b0d4fe064fb20c15a8723b9",
+    ("user", "5"): "2b7d085436fe922b24ecfe714160f1330b9a38522e89c284d2f7c4348eecd8ab",
     ("device", "9"): "503a080797d53c0db050c6497424f68cee1fa3b6019cf1d9278f671ec175678f",
     ("weather", "b"): "b02b26c0d3fb045f51d23a880c39d192479e4e5576451b639a3e28fbbc255f35",
     ("locale", "d"): "2e92d7800b67828229a95af5d214a307aeaa11a3c8eebc924d992adbafa6b9bb",
     ("timezone", "e"): "5d2f107f9f577ef099e00cff37909306a9db57a2701bb2ca085f3e1134673ac1",
     ("identity", "a1"): "1ffda2faf568fa128a48e7ad1f5ad6e924c530f8a458c57bd793b7fefaad5809",
     ("finance", "a2"): "fed7ad8b3e1b18763e72073d5a89f0967aafdcf645652e89bececf2cfe4cf7ca",
+    ("property", "a3"): "fbfa61425a00a32afb55d99a694bc4e3f30fd97bc01dd4a275b9fe7359aba1cc",
 }
 # weather --lat 35.68 --lon 139.69 --start 2024-03-01 --days 60 --hourly --units imperial --seed c, 20 items.
 KNOWN_WEATHER_SERIES = "454fd34ed013d11f3242605a3faca61b925ee9536afec9a5d379c32427aeed3d"
@@ -40,7 +41,7 @@ KNOWN_WEATHER_SERIES = "454fd34ed013d11f3242605a3faca61b925ee9536afec9a5d379c324
 # holidays --country BR --year 2025 --optional --observances, and US 2022 (an observed day in 2021).
 KNOWN_HOLIDAYS_BR = "b0761472942c1ea2bf588ed8949cfd1ba92295703ef8ee14c8085399185d3a98"
 KNOWN_HOLIDAYS_US = "3aba1f5814e3b5e8b02eeafe7c1f925fd37a192c7b156506c610adfa0d09f854"
-KNOWN_USER_DEVICE = "5f673d50452fdcaf10e600f5aa35afce3992e2158d3ab805fa58cc6940558626"
+KNOWN_USER_DEVICE = "37680a417820994c14546339ea7e6124a879bb3a8b26581047f4fe29275c2f7d"
 
 failures = []
 
@@ -460,6 +461,37 @@ check(user["identity"]["numbers"][0]["reserved"], "persona --safe reaches the pa
 table = list(csv.reader(io.StringIO(run("user", "--count", "2", "--seed", "1", "--identity", "--finance", "--format", "csv").stdout.decode("utf-8"))))
 check("identity.numbers" in table[0] and "finance.accounts" in table[0], "user csv with the parts")
 
+# --- property, and persona --property ---
+home = items("property", "--country", "BR", "--count", "30", "--seed", "1", "--income", "90000", "--household-size", "4",
+             "--household-type", "nuclear", "--children", "2", "--age", "40", "--type", "detached", "--tenure", "owner_mortgage",
+             "--area", "town", "--reference-date", "2020-01-01")
+check(all(h["country_code"] == "BR" and h["household_size"] == 4 and h["household_type"] == "nuclear" and h["type"] == "detached"
+          and h["holding"] == "owner_mortgage" and h["area"] == "town" and h["year_built"] <= 2020
+          and h["monthly_cost"]["currency"] == "BRL" for h in home), "property request")
+check(all(h["monthly_cost"] is None for h in items("property", "--country", "DE", "--count", "10", "--seed", "1")),
+      "property: no cost without an income")
+table = list(csv.reader(io.StringIO(run("property", "--count", "5", "--seed", "1", "--format", "csv").stdout.decode("utf-8"))))
+check(table[0][:2] == ["country_code", "area"] and "monthly_cost.amount" in table[0] and len(table) == 6, "property csv")
+for args in (["property", "--income", "5"], ["property", "--type", "castle"], ["property", "--tenure", "squatter"],
+             ["property", "--area", "suburb"], ["property", "--household-type", "commune"], ["property", "--age", "12"],
+             ["property", "--age", "30-40"], ["property", "--household-size", "0"], ["property", "--sex", "male"],
+             ["persona", "--type", "detached"], ["persona", "--area", "city"], ["property", "--property"]):
+    run(*args, "--seed", "1", expect=2)
+run("property", "--country", "XX", "--seed", "1", expect=1)
+run("property", "--household-type", "one_person", "--household-size", "3", "--seed", "1", expect=1)
+plain = items("persona", "--count", "30", "--seed", "9")
+housed = items("persona", "--count", "30", "--seed", "9", "--property")
+check(all("home" not in p for p in plain), "persona: no home by default")
+check([{k: v for k, v in p.items() if k not in ("home", "household_income", "signature")} for p in housed]
+      == [{k: v for k, v in p.items() if k != "signature"} for p in plain], "persona: a home changes nothing else")
+check(all(p["home"]["country_code"] == p["country"]["cca2"] for p in housed), "persona: the home is in the country")
+family = items("persona", "--count", "20", "--seed", "9", "--property", "--relations", "--type", "flat_large")
+check(all("household" in p["relatives"] and p["home"]["type"] == "flat_large" for p in family),
+      "persona --property --relations: the family's household, and --type")
+table = list(csv.reader(io.StringIO(run("persona", "--count", "3", "--seed", "1", "--property", "--format", "csv").stdout.decode("utf-8"))))
+check("home.type" in table[0] and "home.monthly_cost.amount" in table[0] and "household_income.amount" in table[0],
+      "persona csv with a home")
+
 # --- validate ---
 def validate(*args, expect=0):
     done = run("validate", *args, expect=expect)
@@ -486,4 +518,4 @@ if failures:
     for failure in failures:
         print(" -", failure)
     sys.exit(1)
-print("PASS: dasmig-gen usage errors, 19 kinds, holidays and validate, thread invariance, ranges, formats, requests and known outputs.")
+print("PASS: dasmig-gen usage errors, 20 kinds, holidays and validate, thread invariance, ranges, formats, requests and known outputs.")

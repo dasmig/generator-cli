@@ -6,7 +6,7 @@ runs:
   using: composite
   steps:
     - uses: actions/checkout@v4
-      with: {repository: dasmig/address-generator, ref: v2.2.0, path: libs/address-generator}
+      with: {repository: dasmig/address-generator, ref: v2.3.0, path: libs/address-generator}
     - uses: actions/checkout@v4
       with: {repository: dasmig/biodata-generator, ref: v5.0.2, path: libs/biodata-generator}
     - uses: actions/checkout@v4
@@ -34,14 +34,16 @@ runs:
     - uses: actions/checkout@v4
       with: {repository: dasmig/occupation-generator, ref: v3.1.2, path: libs/occupation-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/persona-generator, ref: v4.2.0, path: libs/persona-generator}
+      with: {repository: dasmig/persona-generator, ref: v4.3.0, path: libs/persona-generator}
     - uses: actions/checkout@v4
       with: {repository: dasmig/phone-generator, ref: v2.1.3, path: libs/phone-generator}
+    - uses: actions/checkout@v4
+      with: {repository: dasmig/property-generator, ref: v1.0.0, path: libs/property-generator}
     - uses: actions/checkout@v4
       with: {repository: dasmig/relationship-generator, ref: v1.2.2, path: libs/relationship-generator}
     - uses: actions/checkout@v4
       with: {repository: dasmig/trait-generator, ref: v2.1.4, path: libs/trait-generator}
     - uses: actions/checkout@v4
-      with: {repository: dasmig/user-generator, ref: v3.0.0, path: libs/user-generator}
+      with: {repository: dasmig/user-generator, ref: v3.1.0, path: libs/user-generator}
     - uses: actions/checkout@v4
       with: {repository: dasmig/weather-generator, ref: v2.0.1, path: libs/weather-generator}
