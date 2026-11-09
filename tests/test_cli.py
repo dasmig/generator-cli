@@ -33,7 +33,7 @@ KNOWN = {
     ("timezone", "e"): "5d2f107f9f577ef099e00cff37909306a9db57a2701bb2ca085f3e1134673ac1",
     ("identity", "a1"): "1ffda2faf568fa128a48e7ad1f5ad6e924c530f8a458c57bd793b7fefaad5809",
     ("finance", "a2"): "fed7ad8b3e1b18763e72073d5a89f0967aafdcf645652e89bececf2cfe4cf7ca",
-    ("property", "a3"): "fbfa61425a00a32afb55d99a694bc4e3f30fd97bc01dd4a275b9fe7359aba1cc",
+    ("property", "a3"): "ce25fe7eb2bfad8fba7e9bfba5a3ed79ebc181969bda227be0bece92ea924c80",
 }
 # weather --lat 35.68 --lon 139.69 --start 2024-03-01 --days 60 --hourly --units imperial --seed c, 20 items.
 KNOWN_WEATHER_SERIES = "454fd34ed013d11f3242605a3faca61b925ee9536afec9a5d379c32427aeed3d"
