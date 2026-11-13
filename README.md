@@ -19,7 +19,7 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 
 | Kind | What it generates | Request options |
 | --- | --- | --- |
-| `persona` | A complete character: name, country, city, birth, body, personality, interests, job | `--country --sex --age --reference-date --traits --relations --up --down --stepparents --home --identity --finance --safe --property --area --type --tenure` and their options |
+| `persona` | A complete character: name, country, city, birth, body, personality, interests, job | `--country --sex --age --reference-date --traits --relations --up --down --stepparents --home --identity --finance --safe --property --area --type --tenure --employer --isic --size --employees --legal-form --incorporated-only` and their options |
 | `name`, `surname` | A given and family name, or a family name | `--country --gender` |
 | `nickname` | A nickname, from `--name` or the word lists | `--name` |
 | `city` | A city (GeoNames) | `--country --uniform` |
@@ -38,6 +38,7 @@ Binaries for Linux (x86-64 and ARM64), macOS (ARM64) and Windows (x86-64) are at
 | `holidays` | A country's public holidays in a year, one row per day off (a lookup, not a batch) | `--country --year --optional --observances` |
 | `identity` | National numbers and documents, as test data: a number with what it encodes, a passport with its MRZ | `--country --sex --scheme --document --reference-date --safe --unique --uniform --with-name --age` |
 | `finance` | Bank accounts and payment cards, as test data | `--country --accounts --cards --network --card-source --reference-date --safe --unique --uniform --with-name --sex --age` |
+| `company` | A company with its address, phone, work email and, with `--finance`, a bank account: industry, size, legal form, founding date, name, registration numbers and domain | `--country --isic --size --employees --legal-form --incorporated-only --by-employment --reference-date --safe --uniform --finance` |
 | `validate` | Whether a number, an account or a card is well formed (a lookup, not a batch) | `SCHEME TEXT --reference-date` |
 | `property` | A household's home: dwelling type, tenure, rooms, floor area, year built and monthly cost | `--country --area --type --tenure --household-size --household-type --children --age --income --reference-date --uniform` |
 
@@ -63,18 +64,23 @@ What a request leaves out is drawn. `--age` is `N` or `MIN-MAX` (completed years
 
 `persona --property` adds the persona's home as `home` and what everyone in its household earns as `household_income`, with `--area`, `--type` and `--tenure` as for `property`. The household is the family's with `--relations` (its `household` is then on), or one drawn for the home alone; each other adult's earnings are an occupation draw. Nothing else about the persona changes.
 
+`company` draws a company that fits its country ([company-generator](https://github.com/dasmig/company-generator)) and composes it with the rest of an organisation's record: an `address` (address-generator), a `phone` (phone-generator; null for Hong Kong, Macau, Palestine and Taiwan, which it has no numbers for), an `email` that is a mailbox (`info`, `contact`, `office`, `sales`, `hello` or `admin`) at the company's own domain, and with `--finance` a current `finance` account (finance-generator, opened no earlier than the company was founded). `--isic` (a section letter such as `F`, or a division such as `43`), `--size micro|small|medium|large`, `--employees N` (it sets the size), `--legal-form` (an ISO 20275 code or an abbreviation such as `GmbH`) and `--incorporated-only` force those; the rest is drawn to fit. By default a business counts once, as the register does, so most are micro firms; `--by-employment` makes each count for its staff, as a worker's employer does. `--safe` gives registration numbers nobody holds, `.example` domains and fictional phone numbers and accounts where a country has them. Realistic numbers pass their check digits and may belong to a real company: read [the limits](#limits). The company is the single `get_company` call for the item's seed; the other parts are drawn from their own streams, so adding `--finance` changes nothing else.
+
+`persona --employer` adds the company the persona works for as `employer` (null when the persona is not employed): a business drawn by its staff, in the persona's country, in an industry that employs the persona's job. `--isic`, `--size`, `--employees`, `--legal-form`, `--incorporated-only` and `--safe` apply to it. Nothing else about the persona changes.
+
 `validate SCHEME TEXT` says whether a text is well formed: `validate br-cpf 111.444.777-35`, `validate iban-de "DE89 3704 0044 0532 0130 00"`, or `validate card 4242424242424242`, which also lists the networks the number could belong to. It prints `valid`, and exits 0 for valid and 3 for not, 1 for a scheme neither library has. `--reference-date` applies to numbers that encode a birth date. Valid means the structure and check digits are right: nothing says the number exists or belongs to anyone.
 
 `holidays --country BR --year 2025` lists the year's national holidays by date, with the name in the country's language and in English, a stable `key`, the `kind` and, where a weekend moves a day off, the `observed` date (the US's New Year's Day 2022 is observed on 2021-12-31). `--optional` adds days off for some only (Brazil's Carnival), and `--observances` adds days that are not days off. It is a lookup, so `--count`, `--seed`, `--first` and `--threads` are errors. Each country's years are python-holidays' span within 1970-2050, and a year outside it is an error. See [country-generator](https://github.com/dasmig/country-generator).
 
 ## Limits
 
-These apply to `identity`, `finance`, `validate`, and `user` and `persona` with `--identity` or `--finance`.
+These apply to `identity`, `finance`, `validate`, `company`, and `user` and `persona` with `--identity`, `--finance` or `--employer`.
 
 - Without `--safe`, national numbers, accounts and cards are structurally valid and may match a real person's. Nothing is looked up, and nothing can tell.
 - They are test data. Never use them to identify anyone, to open accounts, to pass an identity or payment check, or on a live payment system. Trying card numbers on a live system is card testing, which is fraud, whatever produced them.
 - `--safe` means different things per scheme, and for many accounts it promises nothing. See [id-generator's limits](https://github.com/dasmig/id-generator#limits) and [finance-generator's limits](https://github.com/dasmig/finance-generator#limits).
 - Documents and cards are data, not images.
+- Company registration, tax, VAT and LEI numbers pass their check digits and lie in the issued range without `--safe`, so they may belong to a real company; a company's name may coincide with a real firm's, and `--safe` changes numbers and domains, not names. Nothing is looked up. See [company-generator's limits](https://github.com/dasmig/company-generator#limits).
 
 ## Batches
 
