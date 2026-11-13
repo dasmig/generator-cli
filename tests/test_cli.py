@@ -18,7 +18,7 @@ from pathlib import Path
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else "build/dasmig-gen"
 KINDS = ["persona", "name", "surname", "nickname", "city", "country", "birth", "biodata", "trait", "interest",
-         "occupation", "user", "family", "device", "weather", "locale", "timezone", "identity", "finance", "property"]
+         "occupation", "user", "family", "device", "weather", "locale", "timezone", "identity", "finance", "property", "company"]
 
 KNOWN = {
     ("persona", "1f"): "fb66afc902755597430c9a56afaf0635a4bc1f912b21c2ff4ca5cb4ca65483d7",
@@ -34,7 +34,11 @@ KNOWN = {
     ("identity", "a1"): "1ffda2faf568fa128a48e7ad1f5ad6e924c530f8a458c57bd793b7fefaad5809",
     ("finance", "a2"): "fed7ad8b3e1b18763e72073d5a89f0967aafdcf645652e89bececf2cfe4cf7ca",
     ("property", "a3"): "ce25fe7eb2bfad8fba7e9bfba5a3ed79ebc181969bda227be0bece92ea924c80",
+    ("company", "a4"): "a49b9da0979afac8b12850a6fab8ffc617c67cf969c4782666af6476d87dc6f2",
 }
+# company --finance --safe --by-employment --seed a5, and persona --employer --seed 9.
+KNOWN_COMPANY_FULL = "ca69fbab3135062bab14ec1677a269a85edccbc8f21f77093929b3713cc6dd22"
+KNOWN_PERSONA_EMPLOYER = "cb1a47cc1ae557e9470d9af21a7e5fbd024af6aed589a41354bd5487f97792d6"
 # weather --lat 35.68 --lon 139.69 --start 2024-03-01 --days 60 --hourly --units imperial --seed c, 20 items.
 KNOWN_WEATHER_SERIES = "454fd34ed013d11f3242605a3faca61b925ee9536afec9a5d379c32427aeed3d"
 # user --device --seed 5: the user known output above, with each user's device.
@@ -359,6 +363,11 @@ for (kind, seed), digest in KNOWN.items():
     data = run(kind, "--count", "1000", "--seed", seed, "--threads", "4").stdout
     got = hashlib.sha256(data).hexdigest()
     check(got == digest, f"{kind} --seed {seed}: sha256 {got} != {digest}")
+got = hashlib.sha256(run("company", "--finance", "--safe", "--by-employment", "--count", "1000", "--seed", "a5",
+                         "--threads", "4").stdout).hexdigest()
+check(got == KNOWN_COMPANY_FULL, f"company --finance --safe --by-employment --seed a5: sha256 {got} != {KNOWN_COMPANY_FULL}")
+got = hashlib.sha256(run("persona", "--employer", "--count", "1000", "--seed", "9", "--threads", "4").stdout).hexdigest()
+check(got == KNOWN_PERSONA_EMPLOYER, f"persona --employer --seed 9: sha256 {got} != {KNOWN_PERSONA_EMPLOYER}")
 got = hashlib.sha256(run("user", "--device", "--count", "1000", "--seed", "5", "--threads", "4").stdout).hexdigest()
 check(got == KNOWN_USER_DEVICE, f"user --device --seed 5: sha256 {got} != {KNOWN_USER_DEVICE}")
 got = hashlib.sha256(run("weather", "--lat", "35.68", "--lon", "139.69", "--start", "2024-03-01", "--days", "60",
@@ -491,6 +500,58 @@ check(all("household" in p["relatives"] and p["home"]["type"] == "flat_large" fo
 table = list(csv.reader(io.StringIO(run("persona", "--count", "3", "--seed", "1", "--property", "--format", "csv").stdout.decode("utf-8"))))
 check("home.type" in table[0] and "home.monthly_cost.amount" in table[0] and "household_income.amount" in table[0],
       "persona csv with a home")
+
+# --- company, and persona --employer ---
+firms = items("company", "--country", "DE", "--count", "60", "--seed", "1", "--isic", "F", "--size", "small",
+              "--incorporated-only", "--legal-form", "GmbH", "--safe", "--finance")
+check(all(f["country_code"] == "DE" and f["isic_section"] == "F" and f["size"] == "small" and f["legal_form"] == "GmbH"
+          and f["domain"].endswith(".example") and all(n["reserved"] for n in f["numbers"])
+          and f["address"]["country_code"] == "DE" and f["phone"]["reserved"] and f["phone"]["country_code"] == "DE"
+          and f["email"]["address"] == f["email"]["local"] + "@" + f["domain"]
+          and f["finance"]["accounts"] and "birth_date" not in f["finance"] for f in firms), "company request")
+check(all(10 <= f["employees"] <= 49 for f in items("company", "--count", "40", "--seed", "2", "--size", "small")), "company --size")
+check(all(f["employees"] == 7 for f in items("company", "--count", "20", "--seed", "2", "--employees", "7")), "company --employees")
+bare = items("company", "--count", "20", "--seed", "3")
+check(all("finance" not in f and "address" in f and "phone" in f and "email" in f for f in bare), "company: parts, finance only when asked")
+check(sum(f["employees"] >= 50 for f in items("company", "--count", "300", "--seed", "4", "--by-employment"))
+      > sum(f["employees"] >= 50 for f in items("company", "--count", "300", "--seed", "4")), "company --by-employment")
+# Countries phone-generator has no numbers for get a null phone, and the batch goes on.
+check(all(f["phone"] is None for f in items("company", "--country", "TW", "--count", "5", "--seed", "1")), "company: no phone numbers in TW")
+check(all(f["address"] and f["phone"] for f in items("company", "--country", "JP", "--count", "5", "--seed", "1")), "company JP")
+table = list(csv.reader(io.StringIO(run("company", "--count", "400", "--seed", "7", "--format", "csv", "--finance").stdout.decode("utf-8"))))
+check(len(table) == 401 and all(len(row) == len(table[0]) for row in table), "company csv: one row each, no ragged rows")
+check("name" in table[0] and "address.city" in table[0] and "phone.e164" in table[0] and "email.address" in table[0]
+      and "finance.accounts" in table[0], "company csv columns")
+check("phone" not in table[0], "company csv: a null phone is written as its columns")
+check(run("company", "--count", "300", "--seed", "1f", "--threads", "1", "--finance").stdout
+      == run("company", "--count", "300", "--seed", "1f", "--threads", "7", "--finance").stdout, "company: threads agree")
+check(run("company", "--count", "10", "--seed", "1f", "--first", "5").stdout
+      == b"".join(r.encode("utf-8") + b"\n" for r in lines(run("company", "--count", "15", "--seed", "1f").stdout)[5:]),
+      "company: --first")
+for args in (["company", "--sex", "male"], ["company", "--size", "huge"], ["company", "--size", "small", "--employees", "7"],
+             ["company", "--employees", "0"], ["company", "--employees", "x"], ["company", "--unique", "email"],
+             ["company", "--accounts", "current"], ["persona", "--isic", "F"], ["persona", "--size", "small"],
+             ["persona", "--incorporated-only"], ["persona", "--legal-form", "GmbH"], ["persona", "--employees", "3"],
+             ["name", "--employer"], ["user", "--finance", "--employer"], ["company", "--employer"],
+             ["company", "--by-employment", "--employees", "-1"]):
+    run(*args, "--seed", "1", expect=2)
+run("company", "--country", "XX", "--seed", "1", expect=1)
+run("company", "--isic", "99", "--seed", "1", expect=1)
+run("company", "--country", "DE", "--legal-form", "LLC", "--seed", "1", expect=1)
+plain = items("persona", "--count", "60", "--seed", "9")
+hired = items("persona", "--count", "60", "--seed", "9", "--employer")
+check(all("employer" not in p for p in plain), "persona: no employer by default")
+check([{k: v for k, v in p.items() if k not in ("employer", "signature")} for p in hired]
+      == [{k: v for k, v in p.items() if k != "signature"} for p in plain], "persona: an employer changes nothing else")
+check(all((p["employer"] is None) == (p["occupation"]["status"] != "employed") for p in hired), "persona: only the employed have an employer")
+check(all(p["employer"]["country_code"] == p["country"]["cca2"] for p in hired if p["employer"]), "persona: the employer is in the country")
+check(any(p["employer"] is None for p in hired) and any(p["employer"] for p in hired), "persona: both employed and not")
+small = items("persona", "--count", "60", "--seed", "9", "--employer", "--size", "micro", "--safe", "--country", "ES")
+check(all(p["employer"]["size"] == "micro" and p["employer"]["domain"].endswith(".example") for p in small if p["employer"]),
+      "persona --employer passes --size and --safe through")
+table = list(csv.reader(io.StringIO(run("persona", "--count", "60", "--seed", "9", "--employer", "--format", "csv").stdout.decode("utf-8"))))
+check(len(table) == 61 and all(len(row) == len(table[0]) for row in table), "persona --employer csv: no ragged rows")
+check("employer.name" in table[0] and "employer" not in table[0], "persona --employer csv: columns for a null employer")
 
 # --- validate ---
 def validate(*args, expect=0):

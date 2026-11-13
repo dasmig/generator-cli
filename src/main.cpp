@@ -9,6 +9,7 @@
 #include <dasmig/biodatagen.hpp>
 #include <dasmig/birthgen.hpp>
 #include <dasmig/citygen.hpp>
+#include <dasmig/companygen.hpp>
 #include <dasmig/countrygen.hpp>
 #include <dasmig/devicegen.hpp>
 #include <dasmig/fingen.hpp>
@@ -48,7 +49,7 @@
 #endif
 
 #ifndef DASMIG_GEN_VERSION
-#define DASMIG_GEN_VERSION "3.9.1"
+#define DASMIG_GEN_VERSION "3.10.0"
 #endif
 
 namespace
@@ -85,13 +86,17 @@ Kinds:
   finance     bank accounts and payment cards, as test data: see Limits below
   property    a household's home: dwelling type, tenure, rooms, floor area, year built
               and monthly cost
+  company     a company with its address, phone, work email and, with --finance, a bank
+              account: industry, size, legal form, founding date, name, registration
+              numbers and domain
   validate    SCHEME TEXT: whether a number, an account or a card is well formed (a lookup,
               no batch options; exit 0 if valid, 3 if not). SCHEME is a scheme key (br-cpf,
               iban-de), or "card" for a card number with the networks it could belong to
 
-Limits (identity, finance, and user and persona with --identity or --finance):
+Limits (identity, finance, company, and user and persona with --identity, --finance or
+--employer):
   Without --safe, numbers, accounts and cards are structurally valid and may match a real
-  person's; nothing is looked up. They are test data: never use them to identify anyone, to
+  person's or company's; nothing is looked up. They are test data: never use them to identify anyone, to
   open accounts, to pass an identity or payment check, or on a live payment system. Trying
   card numbers on a live system is card testing, which is fraud. --safe means different things
   per scheme and for many accounts promises nothing: see the id-generator and
@@ -138,13 +143,28 @@ Request options (the ones a kind understands; the rest is drawn):
   --safe             contacts that reach no one: reserved email domains, fictional phone ranges (user);
                      IP addresses from the documentation ranges (device, user --device);
                      numbers, documents, accounts and cards by the libraries' safe methods
-                     (identity, finance, and user and persona with --identity or --finance)
+                     (identity, finance, and user and persona with --identity or --finance);
+                     registration numbers, domains and the phone number (company, and persona
+                     with --employer)
   --unique KEY       no two items share the key: email or username (user), ip (device),
                      number (identity), account or card (finance)
   --device           also the device of the user's last sign-in, as "device" (user)
   --identity         also the person's numbers and documents, as "identity" (user, persona)
   --finance          also the person's accounts and cards, as "finance" (user, persona; a
-                     persona's are a chance, by the country's Global Findex shares)
+                     persona's are a chance, by the country's Global Findex shares); for a
+                     company, one current account
+  --employer         also the company the persona works for, as "employer" (null when the
+                     persona is not employed); --isic, --size, --employees, --legal-form and
+                     --incorporated-only then apply (persona)
+  --isic CODE        an ISIC Rev. 4 section letter (F) or division (43)
+                     (company; persona with --employer)
+  --size BAND        micro, small, medium or large (company; persona with --employer)
+  --employees N      persons employed, 1 or more (company; persona with --employer)
+  --legal-form F     an ISO 20275 code or the country's abbreviation, GmbH
+                     (company; persona with --employer)
+  --incorporated-only  no sole traders or partnerships (company; persona with --employer)
+  --by-employment    each business counts for its staff, as a worker's employer does
+                     (company)
   --property         also the persona's home and its household's earnings, as "home" and
                      "household_income"; --area, --type and --tenure then apply (persona)
   --with-name        draw a name and a birth first and pass them in, which is what gives a document
@@ -298,11 +318,11 @@ const std::set<std::string> value_options{"country", "sex",   "age",    "referen
                                           "days",    "units", "elevation", "warming",     "language",  "year",
                                           "scheme",  "document", "accounts", "cards",     "network",   "card-source",
                                           "area",    "type",  "tenure", "household-size", "household-type", "children",
-                                          "income"};
+                                          "income", "isic", "size", "employees", "legal-form"};
 const std::set<std::string> kinds{"persona", "name",     "surname",    "nickname", "city",   "country",
                                   "birth",   "biodata",  "trait",      "interest", "occupation", "user",
                                   "family",  "device",   "weather",    "locale",   "timezone",   "holidays",
-                                  "identity", "finance", "validate", "property"};
+                                  "identity", "finance", "validate", "property", "company"};
 
 arguments parse_arguments(int argc, char** argv)
 {
@@ -327,7 +347,8 @@ arguments parse_arguments(int argc, char** argv)
         if (name == "uniform" || name == "safe" || name == "relations" || name == "stepparents" || name == "home" ||
             name == "device" || name == "city" || name == "hourly" || name == "historical" ||
             name == "no-spatial" || name == "optional" || name == "observances" || name == "identity" ||
-            name == "finance" || name == "with-name" || name == "property")
+            name == "finance" || name == "with-name" || name == "property" || name == "employer" ||
+            name == "incorporated-only" || name == "by-employment")
         {
             args.flags.insert(name);
             continue;
@@ -362,7 +383,8 @@ arguments parse_arguments(int argc, char** argv)
 const std::map<std::string, std::set<std::string>> accepted{
     {"persona", {"country", "sex", "age", "reference-date", "traits", "uniform", "relations", "up", "down", "stepparents", "home",
                  "safe", "identity", "finance", "scheme", "document", "accounts", "cards", "network", "card-source",
-                 "property", "area", "type", "tenure"}},
+                 "property", "area", "type", "tenure", "employer", "isic", "size", "employees", "legal-form",
+                 "incorporated-only"}},
     {"name", {"country", "gender"}},
     {"surname", {"country", "gender"}},
     {"nickname", {"name"}},
@@ -387,7 +409,9 @@ const std::map<std::string, std::set<std::string>> accepted{
                  "uniform", "with-name"}},
     {"validate", {"reference-date"}},
     {"property", {"country", "area", "type", "tenure", "household-size", "household-type", "children", "age", "income",
-                  "reference-date", "uniform"}}};
+                  "reference-date", "uniform"}},
+    {"company", {"country", "isic", "size", "employees", "legal-form", "incorporated-only", "by-employment",
+                 "reference-date", "safe", "uniform", "finance"}}};
 
 void check_request_options(const arguments& args)
 {
@@ -453,9 +477,17 @@ void check_request_options(const arguments& args)
                 throw usage_error(std::string{"--"} + name + " needs --property for persona");
     if (args.kind == "property" && args.request.contains("income") && !args.request.contains("country"))
         throw usage_error("--income needs --country (the amount is in its currency)");
+    if (args.kind == "persona" && !args.flags.contains("employer"))
+    {
+        for (const char* name : {"isic", "size", "employees", "legal-form"})
+            if (args.request.contains(name)) throw usage_error(std::string{"--"} + name + " needs --employer for persona");
+        if (args.flags.contains("incorporated-only")) throw usage_error("--incorporated-only needs --employer for persona");
+    }
     if (args.kind == "persona" && args.flags.contains("safe") && !args.flags.contains("identity") &&
-        !args.flags.contains("finance"))
-        throw usage_error("--safe needs --identity or --finance for persona");
+        !args.flags.contains("finance") && !args.flags.contains("employer"))
+        throw usage_error("--safe needs --identity, --finance or --employer for persona");
+    if (args.kind == "company" && args.request.contains("size") && args.request.contains("employees"))
+        throw usage_error("--size and --employees do not go together; --employees sets the size");
     if (args.kind == "persona" && !args.flags.contains("relations"))
     {
         for (const char* name : {"up", "down"})
@@ -620,6 +652,16 @@ std::vector<nullable_object> occupation_nullable(const std::string& prefix)
         out.push_back(std::move(object));
     }
     return out;
+}
+
+// A member that is null at times, with the columns it has when it is not, read
+// from a prototype result's JSON.
+nullable_object nullable_member(const std::string& column, const std::string& prototype_json)
+{
+    nullable_object object{.column = column, .columns = {}};
+    for (const auto& cell : core::flatten_json(prototype_json)) object.columns.push_back(column + "." + cell.first);
+    if (object.columns.empty()) throw std::logic_error("the prototype of " + column + " has no members");
+    return object;
 }
 
 // An item's JSON with the key a unique batch compares.
@@ -813,6 +855,43 @@ E named_value(const std::string& text, const std::array<std::string_view, N>& na
 }
 
 // --area, --type, --tenure and --uniform as a request for a home; the
+// The company a company request or a persona's employer is drawn from:
+// --isic, --size, --employees, --legal-form and --incorporated-only; the
+// company kind adds the country, the reference date and --by-employment.
+dasmig::company_request company_options(const arguments& args)
+{
+    static constexpr std::array<std::string_view, 4> sizes{"micro", "small", "medium", "large"};
+    dasmig::company_request request;
+    if (const auto isic = get(args, "isic")) request.isic = *isic;
+    if (const auto size = get(args, "size")) request.size = named_value<dasmig::size_band>(*size, sizes, "--size");
+    if (const auto employees = get(args, "employees"))
+    {
+        const auto n = parse_count(*employees, "--employees");
+        if (n < 1 || n > 100000000) throw usage_error("--employees must be 1 or more");
+        request.employees = static_cast<std::uint32_t>(n);
+    }
+    if (const auto form = get(args, "legal-form")) request.legal_form = *form;
+    request.incorporated_only = args.flags.contains("incorporated-only");
+    request.safe = args.flags.contains("safe");
+    request.weighted = !args.flags.contains("uniform");
+    if (args.kind != "company") return request;
+    if (const auto country = get(args, "country")) request.country = upper(*country);
+    if (const auto date = get(args, "reference-date")) request.reference_date = parse_date(*date);
+    if (args.flags.contains("by-employment")) request.weight = dasmig::company_weight::employment;
+    return request;
+}
+
+// The JSON of a result with members added before its signature.
+std::string with_members(std::string json, const std::vector<std::pair<std::string, std::string>>& members)
+{
+    const auto at = json.rfind(",\"signature\":");
+    if (at == std::string::npos) throw std::runtime_error("a result has no signature to add members before");
+    std::string extra;
+    for (const auto& [key, value] : members) extra += ",\"" + key + "\":" + value;
+    json.insert(at, extra);
+    return json;
+}
+
 // property kind adds the household, the age and the income.
 dasmig::property_request property_options(const arguments& args)
 {
@@ -1060,6 +1139,13 @@ void load_full_tier(const arguments& args)
         check(dasmig::fng::instance().load(dasmig::dataset::full), "finance-generator");
     if (args.kind == "property" || args.flags.contains("property"))
         check(dasmig::pty::instance().load(dasmig::dataset::full), "property-generator");
+    if (args.kind == "company" || args.flags.contains("employer"))
+        check(dasmig::cpg::instance().load(dasmig::dataset::full), "company-generator");
+    if (args.kind == "company")
+    {
+        check(dasmig::adg::instance().load(dasmig::dataset::full), "address-generator");
+        check(dasmig::phg::instance().load(dasmig::dataset::full), "phone-generator");
+    }
     if (args.kind == "property" && args.request.contains("income"))
         check(dasmig::ocg::instance().load(dasmig::dataset::full), "occupation-generator");
     if (all || wants("city") || weather_city)
@@ -1121,6 +1207,13 @@ int run(const arguments& args)
         format.nullable.push_back(object(args.kind == "persona" ? "home.monthly_cost" : "monthly_cost"));
         if (args.kind == "persona") format.nullable.push_back(object("household_income"));
     }
+    // A persona's employer is null when it is not employed; a company's phone, where there are no numbers.
+    if (args.format == "csv" && args.kind == "persona" && args.flags.contains("employer"))
+        format.nullable.push_back(nullable_member(
+            "employer", dasmig::cpg::instance().get_company({.country = "US"}, 0).to_json()));
+    if (args.format == "csv" && args.kind == "company")
+        format.nullable.push_back(nullable_member(
+            "phone", dasmig::phg::instance().get_phone({.country = "US"}, 0).to_json()));
     const bool uniform = args.flags.contains("uniform");
     const auto country = get(args, "country");
     const auto sex_text = get(args, "sex");
@@ -1156,6 +1249,7 @@ int run(const arguments& args)
         if (args.flags.contains("identity")) request.identity = identity_options(args);
         if (args.flags.contains("finance")) request.finance = finance_options(args);
         if (args.flags.contains("property")) request.home = property_options(args);
+        if (args.flags.contains("employer")) request.employer = company_options(args);
         const auto& gen = dasmig::psg::instance();
         emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_persona(request, s).to_json(); });
@@ -1476,6 +1570,59 @@ int run(const arguments& args)
         const auto& gen = dasmig::pty::instance();
         emit(format, out, options, seed,
              [&](std::uint64_t s) { return gen.get_property(request, s).to_json(); });
+    }
+    else if (args.kind == "company")
+    {
+        const auto request = company_options(args);
+        const bool safe = args.flags.contains("safe");
+        const bool bank = args.flags.contains("finance");
+        const auto& companies = dasmig::cpg::instance();
+        static constexpr std::array<std::string_view, 6> mailboxes{"info", "contact", "office", "sales", "hello", "admin"};
+        emit(format, out, options, seed,
+             [&](std::uint64_t s)
+             {
+                 const auto company = companies.get_company(request, s);
+                 const auto parts = core::rng{s};
+                 std::vector<std::pair<std::string, std::string>> members;
+                 members.emplace_back("address", dasmig::adg::instance()
+                                                     .get_address({.country = company.country_code},
+                                                                  parts.split("address").seed())
+                                                     .to_json());
+                 // phone-generator has no numbers for Hong Kong, Macau, Palestine and Taiwan: null there.
+                 members.emplace_back("phone", !dasmig::phg::instance().has_country(company.country_code)
+                                                   ? std::string{"null"}
+                                                   : dasmig::phg::instance()
+                                                         .get_phone({.country = company.country_code, .safe = safe},
+                                                                    parts.split("phone").seed())
+                                                         .to_json());
+                 // A work address: a mailbox drawn from a short list, at the company's own domain.
+                 core::rng mailbox_rng{parts.split("email").seed()};
+                 const std::string local{mailboxes[core::bounded(mailbox_rng, mailboxes.size())]};
+                 core::json_writer email;
+                 email.begin_object()
+                     .field("address", local + "@" + company.domain)
+                     .field("local", local)
+                     .field("domain", company.domain)
+                     .end_object();
+                 members.emplace_back("email", email.str());
+                 if (bank)
+                 {
+                     dasmig::finance_request money;
+                     money.country = company.country_code;
+                     money.safe = safe;
+                     // The account is opened from the holder's 18th birthday: stand in a holder
+                     // born 18 years before the founding, so no account is older than its company.
+                     money.birth_date = std::chrono::year_month_day{
+                         std::max(company.founded.year() - std::chrono::years{18}, std::chrono::year{1900}),
+                         company.founded.month(), std::min(company.founded.day(), std::chrono::day{28})};
+                     auto account = dasmig::fng::instance().get_finance(money, parts.split("finance").seed()).to_json();
+                     // The stand-in's birth date is not the company's; leave it out.
+                     if (const auto at = account.find("\"birth_date\":\""); at != std::string::npos)
+                         account.erase(at, account.find("\",", at) - at + 2);
+                     members.emplace_back("finance", std::move(account));
+                 }
+                 return with_members(company.to_json(), members);
+             });
     }
     else if (args.kind == "holidays")
     {
